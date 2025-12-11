@@ -1,0 +1,27 @@
+[Unit]
+Description=Instagram Telegram Bot
+After=network.target mysql.service
+Wants=mysql.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/miladrajabi.com/python/instagram-telegram-bot
+Environment="PATH=/var/www/miladrajabi.com/python/instagram-telegram-bot/venv/bin"
+ExecStart=/var/www/miladrajabi.com/python/instagram-telegram-bot/venv/bin/python main.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/www/miladrajabi.com/python/logs/bot.log
+StandardError=append:/var/www/miladrajabi.com/python/logs/bot-error.log
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/www/miladrajabi.com/python/instagram-telegram-bot/sessions
+ReadWritePaths=/var/www/miladrajabi.com/python/logs
+
+[Install]
+WantedBy=multi-user.target
