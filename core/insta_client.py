@@ -92,10 +92,12 @@ class InstagramClient:
             bool: True if verification successful
         """
         try:
-            self.client.two_factor_login(code)
+            # Use the correct method for instagrapi
+            self.client.login(self.username, self.password, verification_code=code)
             self._save_session()
             self.is_logged_in = True
             self._notify("✅ 2FA verification successful!")
+            logger.info("2FA verification successful")
             return True
         except Exception as e:
             logger.error(f"2FA verification failed: {e}")
