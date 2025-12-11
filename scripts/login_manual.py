@@ -35,7 +35,6 @@ print("\033[1;32mRequired cookies:\033[0m")
 print("  • sessionid")
 print("  • csrftoken")
 print("  • ds_user_id")
-print("  • mid")
 print("\n" + "="*60 + "\n")
 
 # Get cookies from user
@@ -54,8 +53,6 @@ if not ds_user_id:
     print("\033[0;31m✗ ds_user_id is required!\033[0m")
     sys.exit(1)
 
-mid = input("Enter 'mid' cookie value (optional, press Enter to skip): ").strip()
-
 print("\n" + "="*60)
 print("\n\033[1;33m⏳ Creating session...\033[0m\n")
 
@@ -63,16 +60,36 @@ try:
     # Create client
     cl = Client()
     
-    # Set session data
-    cl.set_session_data({
-        'cookies': {
-            'sessionid': sessionid,
-            'csrftoken': csrftoken,
-            'ds_user_id': ds_user_id,
-            'mid': mid if mid else '',
+    # Build settings dictionary with the correct structure for instagrapi
+    settings = {
+        "uuids": {
+            "phone_id": cl.phone_id,
+            "uuid": cl.uuid,
+            "client_session_id": cl.client_session_id,
+            "advertising_id": cl.advertising_id,
+            "device_id": cl.device_id
         },
-        'user_id': int(ds_user_id) if ds_user_id.isdigit() else None,
-    })
+        "cookies": {},
+        "last_login": None,
+        "device_settings": cl.device_settings,
+        "user_agent": cl.user_agent
+    }
+    
+    # Add cookies
+    settings["cookies"]["sessionid"] = sessionid
+    settings["cookies"]["csrftoken"] = csrftoken
+    settings["cookies"]["ds_user_id"] = ds_user_id
+    
+    # Set user_id
+    cl.user_id = ds_user_id
+    
+    # Load settings
+    cl.set_settings(settings)
+    cl.set_user_agent(settings["user_agent"])
+    
+    # Build cookie jar
+    for key, value in settings["cookies"].items():
+        cl.set_cookie(key, value)
     
     # Test the session
     print("\033[1;33m🔍 Testing session...\033[0m")
@@ -88,7 +105,7 @@ try:
     
     print(f"\n\033[0;32m✅ Session saved to: {session_file}\033[0m")
     print("\n\033[1;32m╔══════════════════════════════════════════════════════════════╗")
-    print("║                  ✅ SUCCESS!                                  ║")
+    print("║                      ✅ SUCCESS!                              ║")
     print("╚══════════════════════════════════════════════════════════════╝\033[0m\n")
     print("You can now start the bot: \033[1;33mbash scripts/run.sh\033[0m\n")
     
@@ -102,5 +119,10 @@ except LoginRequired:
     sys.exit(1)
     
 except Exception as e:
-    print(f"\n\033[0;31m✗ Error: {str(e)}\033[0m\n")
+    print(f"\n\033[0;31m✗ Error: {str(e)}\033[0m")
+    print("\n\033[1;33m🔧 Troubleshooting:\033[0m")
+    print("1. Make sure cookies are from a fresh login")
+    print("2. Check that Instagram is still logged in your browser")
+    print("3. Try copying cookies again")
+    print("4. Make sure ds_user_id is only numbers\n")
     sys.exit(1)
