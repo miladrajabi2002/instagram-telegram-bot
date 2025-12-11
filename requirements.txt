@@ -1,5 +1,6 @@
 # Instagram Automation
 instagrapi==2.1.2
+Pillow>=8.1.1
 
 # Telegram Bot
 python-telegram-bot==21.0.1
