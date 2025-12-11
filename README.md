@@ -14,7 +14,7 @@
 - Conservative rate limits (30 follows/day default)
 - Randomized human-like delays (60-600 seconds)
 - Exponential backoff on errors
-- 2FA/Challenge handling via Telegram
+- 2FA/Challenge handling
 
 ✅ **Telegram Control:**
 - Start/stop automation tasks
@@ -22,155 +22,161 @@
 - Check logs remotely
 - Adjust rate limits
 
-✅ **Database Tracking:**
-- MySQL for session persistence
-- Action logging and analytics
-- Follow/unfollow tracking
+✅ **Easy Setup:**
+- Interactive setup wizard
+- Standalone login script with 2FA support
+- One-command installation
 
 ---
 
-## Installation
+## Quick Start (3 Commands)
 
 ### Prerequisites
 
-- Ubuntu 20.04+ (or Debian-based Linux)
-- Python 3.8+
+Only these need to be installed on your server:
+- Python 3.8+ 
 - MySQL 5.7+
-- Telegram Bot Token (from @BotFather)
-
-### Quick Setup (Automated)
+- Git
 
 ```bash
-# 1. Clone the repository
-cd /var/www/miladrajabi.com/python/
-git clone https://github.com/miladrajabi2002/instagram-telegram-bot.git
-cd instagram-telegram-bot
-
-# 2. Run setup script (as root)
-sudo bash setup.sh
-```
-
-### Manual Setup
-
-#### 1. Install Dependencies
-
-```bash
-# System packages
+# Install prerequisites (Ubuntu/Debian)
 sudo apt update
-sudo apt install -y python3 python3-pip python3-venv mysql-server git
-
-# Create directories
-sudo mkdir -p /var/www/miladrajabi.com/python
-sudo mkdir -p /var/www/miladrajabi.com/python/logs
+sudo apt install -y python3 python3-venv python3-pip mysql-server git
 ```
 
-#### 2. Clone Repository
+### Installation
 
 ```bash
-cd /var/www/miladrajabi.com/python/
+# 1. Clone repository
 git clone https://github.com/miladrajabi2002/instagram-telegram-bot.git
 cd instagram-telegram-bot
+
+# 2. Run interactive setup (will ask for all credentials)
+bash setup.sh
+
+# 3. Login to Instagram (supports 2FA)
+bash scripts/login.sh
+
+# 4. Start the bot
+bash scripts/run.sh
 ```
 
-#### 3. Create Virtual Environment
-
-```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-#### 4. Setup MySQL Database
-
-```bash
-# Login to MySQL
-sudo mysql -u root -p
-
-# Run these SQL commands:
-CREATE DATABASE instagram_bot CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER 'instagram_bot_user'@'localhost' IDENTIFIED BY 'YOUR_SECURE_PASSWORD';
-GRANT ALL PRIVILEGES ON instagram_bot.* TO 'instagram_bot_user'@'localhost';
-FLUSH PRIVILEGES;
-EXIT;
-
-# Import schema
-mysql -u root -p instagram_bot < sql/schema.sql
-```
-
-#### 5. Configure Environment
-
-```bash
-# Copy example config
-cp .env.example .env
-
-# Generate encryption key
-python3 scripts/generate_key.py
-
-# Edit configuration
-nano .env
-```
-
-**Required `.env` settings:**
-
-```ini
-# Telegram (REQUIRED)
-TELEGRAM_BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz  # From @BotFather
-TELEGRAM_ADMIN_ID=123456789  # Your Telegram user ID
-
-# Instagram (REQUIRED)
-INSTAGRAM_USERNAME=your_username
-INSTAGRAM_PASSWORD=your_password
-
-# Database (REQUIRED)
-DB_HOST=localhost
-DB_PORT=3306
-DB_NAME=instagram_bot
-DB_USER=instagram_bot_user
-DB_PASSWORD=YOUR_SECURE_PASSWORD
-
-# Security (REQUIRED)
-ENCRYPTION_KEY=YOUR_GENERATED_FERNET_KEY
-
-# Paths
-SESSION_FILE_PATH=/var/www/miladrajabi.com/python/instagram-telegram-bot/sessions/
-LOG_FILE=/var/www/miladrajabi.com/python/logs/bot.log
-
-# Rate Limits (Adjust based on your account age)
-MAX_FOLLOWS_PER_DAY=30
-MAX_FOLLOWS_PER_HOUR=5
-MAX_LIKES_PER_DAY=100
-MAX_COMMENTS_PER_DAY=20
-UNFOLLOW_AFTER_DAYS=7
-```
-
-#### 6. Set Permissions
-
-```bash
-sudo chown -R www-data:www-data /var/www/miladrajabi.com/python/instagram-telegram-bot
-sudo chown -R www-data:www-data /var/www/miladrajabi.com/python/logs
-sudo chmod 600 .env  # Protect credentials
-```
+That's it! 🎉
 
 ---
 
-## Running the Bot
+## Detailed Setup Guide
 
-### Method 1: Direct Python (For Testing)
+### Step 1: Setup MySQL Database
+
+Before running setup, create the database:
 
 ```bash
-cd /var/www/miladrajabi.com/python/instagram-telegram-bot
-source venv/bin/activate
-python main.py
+sudo mysql -u root -p
+```
+
+Run these SQL commands:
+
+```sql
+CREATE DATABASE instagram_bot CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'instagram_bot_user'@'localhost' IDENTIFIED BY 'your_secure_password';
+GRANT ALL PRIVILEGES ON instagram_bot.* TO 'instagram_bot_user'@'localhost';
+FLUSH PRIVILEGES;
+EXIT;
+```
+
+Import the schema:
+
+```bash
+mysql -u root -p instagram_bot < sql/schema.sql
+```
+
+### Step 2: Get Telegram Bot Token
+
+1. Open Telegram and search for **@BotFather**
+2. Send `/newbot` command
+3. Follow instructions to create your bot
+4. Copy the token (looks like: `1234567890:ABCdefGHIjklMNOpqrsTUVwxyz`)
+
+### Step 3: Get Your Telegram User ID
+
+1. Open Telegram and search for **@userinfobot**
+2. Send `/start` command
+3. Copy your user ID (a number like: `123456789`)
+
+### Step 4: Run Setup Wizard
+
+```bash
+bash setup.sh
+```
+
+The wizard will ask for:
+- ✅ Telegram Bot Token
+- ✅ Your Telegram User ID
+- ✅ Instagram Username
+- ✅ Instagram Password
+- ✅ MySQL credentials
+
+It will:
+- ✅ Create Python virtual environment
+- ✅ Install all dependencies
+- ✅ Generate encryption key
+- ✅ Create `.env` configuration file
+- ✅ Test database connection
+
+### Step 5: Login to Instagram
+
+```bash
+bash scripts/login.sh
+```
+
+**If you have 2FA enabled (Two-Factor Authentication):**
+- The script will detect it automatically
+- You'll be prompted to enter your 6-digit code
+- The session will be saved after successful verification
+- You won't need to login again unless session expires
+
+**Output when successful:**
+```
+🔐 Logging in to Instagram...
+
+Username: your_username
+
+✅ Login successful!
+✅ Session saved to: sessions/your_username_session.json
+✅ Your Instagram User ID: 123456789
+```
+
+### Step 6: Start the Bot
+
+```bash
+bash scripts/run.sh
+```
+
+The bot will start and you'll see:
+```
+Instagram Telegram Bot Starting
+==================================================
+Bot initialized successfully
+Starting bot polling...
 ```
 
 **To stop:** Press `Ctrl+C`
 
-### Method 2: Systemd Service (Production)
+---
+
+## Running as Service (Production)
+
+For permanent background operation:
 
 ```bash
-# Install service
+# Install systemd service
 sudo cp systemd/instagram-bot.service /etc/systemd/system/
+
+# Edit paths if needed
+sudo nano /etc/systemd/system/instagram-bot.service
+
+# Reload systemd
 sudo systemctl daemon-reload
 
 # Start bot
@@ -196,25 +202,25 @@ sudo systemctl restart instagram-bot
 
 ## Telegram Commands
 
-Once the bot is running, open Telegram and message your bot:
+After starting the bot, open Telegram and message your bot:
 
-### Basic Commands
+### Getting Started
 
-- `/start` - Initialize bot and see welcome message
-- `/help` - Show all available commands
-- `/login` - Login to Instagram (with 2FA support)
-- `/status` - Check bot and scheduler status
+- `/start` - Initialize bot
+- `/help` - Show all commands
+- `/login` - Login to Instagram (if not already logged in)
+- `/status` - Check bot status
 
 ### Task Management
 
-- `/start_tasks` - Show task menu to start automation
+- `/start_tasks` - Show menu to start automation modules
 - `/stop_tasks` - Stop all running tasks
 - `/pause` - Pause task execution
 - `/resume` - Resume paused tasks
 
 ### Monitoring
 
-- `/stats` - View detailed statistics
+- `/stats` - View detailed statistics (7 days)
 - `/limits` - Show current rate limits
 - `/logs` - View recent log entries
 
@@ -222,198 +228,231 @@ Once the bot is running, open Telegram and message your bot:
 
 ## Troubleshooting
 
-### Bot doesn't start
+### Setup Issues
 
-**Check Python path:**
+**Python not found:**
 ```bash
-cd /var/www/miladrajabi.com/python/instagram-telegram-bot
-source venv/bin/activate
-which python  # Should show venv/bin/python
-python --version  # Should be 3.8+
+sudo apt install python3 python3-venv python3-pip
 ```
 
-**Check dependencies:**
+**MySQL connection failed:**
 ```bash
-pip list | grep instagrapi
-pip list | grep telegram
-```
+# Check MySQL is running
+sudo systemctl status mysql
 
-**Install missing packages:**
-```bash
-pip install -r requirements.txt
-```
-
-### Configuration errors
-
-**Test config file:**
-```bash
-python -c "import config; print('Config OK')"
-```
-
-**Common errors:**
-- `TELEGRAM_BOT_TOKEN is required` → Add token to `.env`
-- `ENCRYPTION_KEY is required` → Generate with `python3 scripts/generate_key.py`
-
-### Database connection issues
-
-**Test MySQL connection:**
-```bash
+# Verify credentials
 mysql -u instagram_bot_user -p instagram_bot
 ```
 
-**Check if tables exist:**
-```sql
-USE instagram_bot;
-SHOW TABLES;
-```
-
-**Recreate database:**
+**Permission denied:**
 ```bash
-mysql -u root -p instagram_bot < sql/schema.sql
+chmod +x setup.sh scripts/*.sh
 ```
 
-### Instagram login fails
+### Login Issues
 
-**2FA Required:**
-- Bot will ask for code via Telegram
-- Enter the 6-digit code when prompted
+**2FA code invalid:**
+- Make sure you're entering the current 6-digit code
+- Code expires after ~30 seconds, request a new one if needed
+- Try again: `bash scripts/login.sh`
 
-**Challenge Required:**
-- Open Instagram app
-- Complete security challenge
-- Retry `/login` in Telegram
+**Challenge required:**
+```
+1. Open Instagram app on your phone
+2. You may see a security check - complete it
+3. Wait 5-10 minutes
+4. Try login again: bash scripts/login.sh
+```
 
 **Session expired:**
-- Delete session file: `rm sessions/*_session.json`
-- Login again with `/login`
+```bash
+# Delete old session
+rm -rf sessions/*
 
-### Rate limiting or blocks
+# Login again
+bash scripts/login.sh
+```
 
-**Reduce limits in `.env`:**
+### Runtime Issues
+
+**Bot crashes immediately:**
+```bash
+# Check configuration
+cat .env
+
+# Check logs
+tail -f logs/bot.log
+
+# Test configuration
+source venv/bin/activate
+python -c "import config; print('Config OK')"
+```
+
+**Rate limiting / Action blocked:**
+
+Edit `.env` and reduce limits:
 ```ini
-MAX_FOLLOWS_PER_DAY=15  # Start lower for new accounts
+MAX_FOLLOWS_PER_DAY=15
 MAX_FOLLOWS_PER_HOUR=3
-MIN_ACTION_DELAY=120    # Increase delays
+MIN_ACTION_DELAY=120
 MAX_ACTION_DELAY=900
 ```
 
-**Wait and retry:**
-- If blocked, wait 24-48 hours
-- Use Instagram normally (manually) during wait
-- Start with minimal automation after unblock
+Then restart:
+```bash
+bash scripts/run.sh
+# or
+sudo systemctl restart instagram-bot
+```
 
-### View detailed logs
+**Database errors:**
+```bash
+# Verify tables exist
+mysql -u instagram_bot_user -p instagram_bot -e "SHOW TABLES;"
+
+# Reimport schema if needed
+mysql -u instagram_bot_user -p instagram_bot < sql/schema.sql
+```
+
+### View Logs
 
 ```bash
 # Real-time logs
-tail -f /var/www/miladrajabi.com/python/logs/bot.log
-
-# Search for errors
-grep -i error /var/www/miladrajabi.com/python/logs/bot.log
+tail -f logs/bot.log
 
 # Last 100 lines
-tail -n 100 /var/www/miladrajabi.com/python/logs/bot.log
-```
+tail -n 100 logs/bot.log
 
-### Service won't start
+# Search for errors
+grep -i error logs/bot.log
 
-**Check service status:**
-```bash
-sudo systemctl status instagram-bot
-```
-
-**View service logs:**
-```bash
-sudo journalctl -u instagram-bot -n 50 --no-pager
-```
-
-**Check file permissions:**
-```bash
-ls -la /var/www/miladrajabi.com/python/instagram-telegram-bot/
-ls -la /var/www/miladrajabi.com/python/instagram-telegram-bot/.env
-```
-
-**Fix permissions:**
-```bash
-sudo chown -R www-data:www-data /var/www/miladrajabi.com/python/instagram-telegram-bot
-sudo chmod 600 /var/www/miladrajabi.com/python/instagram-telegram-bot/.env
+# Systemd logs (if using service)
+sudo journalctl -u instagram-bot -n 100 --no-pager
 ```
 
 ---
 
 ## Safety Guidelines
 
-### Conservative Limits (Recommended)
+### Recommended Limits by Account Age
 
 **New accounts (<3 months):**
-- Follows: 10-20/day
-- Likes: 50-80/day
-- Comments: 5-10/day
+```ini
+MAX_FOLLOWS_PER_DAY=15
+MAX_LIKES_PER_DAY=50
+MAX_COMMENTS_PER_DAY=10
+```
 
-**Established accounts (>6 months):**
-- Follows: 30-50/day
-- Likes: 100-150/day
-- Comments: 15-25/day
+**Established accounts (3-12 months):**
+```ini
+MAX_FOLLOWS_PER_DAY=30
+MAX_LIKES_PER_DAY=100
+MAX_COMMENTS_PER_DAY=20
+```
 
 **Aged accounts (>1 year):**
-- Follows: 50-100/day
-- Likes: 150-200/day
-- Comments: 20-30/day
+```ini
+MAX_FOLLOWS_PER_DAY=50
+MAX_LIKES_PER_DAY=150
+MAX_COMMENTS_PER_DAY=30
+```
 
 ### Best Practices
 
-1. **Start slow:** Begin with minimal limits for 1-2 weeks
+1. **Start slow:** Use minimal limits for first 1-2 weeks
 2. **Increase gradually:** Add 10-20% per week if no issues
-3. **Use during active hours:** Schedule tasks during your typical usage time
+3. **Use during active hours:** Run automation when you'd normally use Instagram
 4. **Mix manual activity:** Use Instagram manually alongside automation
-5. **Monitor closely:** Check logs and `/stats` daily for warnings
-6. **Respect blocks:** If action blocked, reduce limits by 50%
+5. **Monitor closely:** Check `/stats` and logs daily
+6. **Respect blocks:** If action blocked, reduce limits by 50% immediately
 
-### Warning Signs
+### Warning Signs - Stop If You See:
 
-⚠️ **Stop automation if you see:**
-- "Action blocked" messages
-- "Try again later" errors
-- Login challenges frequently
-- Sudden follower drops
+⚠️ Action blocked repeatedly
+⚠️ "Try again later" errors
+⚠️ Login challenges frequently
+⚠️ Sudden follower drops
 
 ---
 
-## Project Structure
+## File Structure
 
 ```
 instagram-telegram-bot/
-├── bot/                    # Telegram bot interface
-│   └── telegram_bot.py     # Command handlers
-├── core/                   # Core functionality
-│   ├── insta_client.py     # Instagram API wrapper
+├── setup.sh                 # Interactive setup wizard
+├── scripts/
+│   ├── login.sh            # Standalone login (2FA support)
+│   ├── run.sh              # Start bot
+│   └── generate_key.py     # Generate encryption key
+├── bot/                    # Telegram interface
+│   └── telegram_bot.py
+├── core/                   # Instagram automation core
+│   ├── insta_client.py     # API wrapper
 │   └── scheduler.py        # Task scheduling
-├── modules/                # Automation modules
+├── modules/                # Automation strategies
 │   ├── follow_followers_of_followers.py
 │   ├── like_stories_of_followers.py
 │   ├── comment_emoji.py
 │   └── unfollow_after_delay.py
 ├── includes/               # Utilities
-│   ├── database.py         # MySQL operations
-│   ├── security.py         # Encryption
-│   └── logger.py           # Logging setup
-├── sql/                    # Database schema
-│   └── schema.sql
-├── systemd/                # System service
+│   ├── database.py
+│   ├── security.py
+│   └── logger.py
+├── sql/
+│   └── schema.sql          # Database schema
+├── systemd/
 │   └── instagram-bot.service
-├── scripts/                # Helper scripts
-│   └── generate_key.py
 ├── main.py                 # Entry point
 ├── config.py               # Configuration
-├── requirements.txt        # Dependencies
-└── .env                    # Environment variables
+├── requirements.txt
+└── .env                    # Your credentials (created by setup)
 ```
 
 ---
 
-## Contributing
+## FAQ
 
-This is a personal project for single-user automation. Use responsibly and respect Instagram's Terms of Service.
+**Q: Do I need to keep my computer/server on?**
+A: Yes, for the bot to work continuously. Use systemd service for auto-restart.
+
+**Q: Will this get my account banned?**
+A: If you follow the safety guidelines and use conservative limits, risk is minimal. Start slow.
+
+**Q: Can I run multiple Instagram accounts?**
+A: No, this bot is designed for single-account use only.
+
+**Q: Do I need a Telegram account?**
+A: Yes, Telegram is the control interface for the bot.
+
+**Q: How do I update the bot?**
+```bash
+cd instagram-telegram-bot
+git pull
+source venv/bin/activate
+pip install -r requirements.txt --upgrade
+bash scripts/run.sh
+```
+
+**Q: How do I change rate limits?**
+Edit `.env` file and restart the bot:
+```bash
+nano .env
+# Edit MAX_FOLLOWS_PER_DAY, etc.
+bash scripts/run.sh
+```
+
+---
+
+## Support
+
+For issues:
+1. Check logs: `tail -f logs/bot.log`
+2. Review troubleshooting section above
+3. Verify `.env` configuration
+4. Check Instagram for security challenges
+5. Reduce rate limits if experiencing blocks
+
+---
 
 ## License
 
@@ -422,20 +461,10 @@ MIT License - Use at your own risk.
 ## Disclaimer
 
 ⚠️ **Important:**
-- This bot is for educational and personal use only
+- For educational and personal use only
 - Instagram may restrict or ban accounts using automation
 - Use conservative limits and monitor closely
-- The developer is not responsible for any account restrictions
-
----
-
-## Support
-
-For issues or questions:
-1. Check logs: `/logs` command or `tail -f /var/www/miladrajabi.com/python/logs/bot.log`
-2. Review this README's troubleshooting section
-3. Check Instagram for any security challenges
-4. Reduce rate limits if experiencing blocks
+- Developer not responsible for any account restrictions
 
 ---
 
