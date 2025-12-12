@@ -40,29 +40,29 @@ class CommentEmoji:
         self.module_name = "comment_emoji"
 
     def run(self):
-        """Schedule the like and comment task."""
+        """Execute the like and comment logic directly."""
         logger.info("Starting comment emoji module")
         
-        # Schedule task
-        task = {
-            'type': 'comment',
-            'function': self._execute,
-            'interval': config.TASK_INTERVALS.get('comment', 3600)  # 1 hour
-        }
-        
-        self.scheduler.add_task(task)
-        logger.info("Comment task scheduled")
+        try:
+            self._execute()
+            logger.info("✅ Comment emoji module completed")
+        except Exception as e:
+            logger.error(f"❌ Comment emoji module failed: {e}", exc_info=True)
 
     def _execute(self):
         """Execute the like and comment logic."""
         logger.info("Executing comment emoji task")
         
         # Get followers from DATABASE (not API!)
-        logger.info("💾 Getting followers from database...")
+        logger.info("📂 Getting followers from database...")
         followers = self.client.get_followers_from_db(limit=15)
         
         if not followers:
             logger.warning("⚠️ No followers in database")
+            self.client._notify(
+                "⚠️ <b>No followers found!</b>\n\n"
+                "Please use /import_followers to add followers."
+            )
             return
         
         logger.info(f"Got {len(followers)} followers from database")
@@ -85,7 +85,7 @@ class CommentEmoji:
                     logger.debug(f"No posts for {follower.username}")
                     continue
                 
-                logger.info(f"📸 User {follower.username} has {len(medias)} recent posts")
+                logger.info(f"📷 User {follower.username} has {len(medias)} recent posts")
                 
                 # Like and optionally comment on first post
                 media = medias[0]
@@ -126,3 +126,11 @@ class CommentEmoji:
                 continue
         
         logger.info(f"✅ Like/Comment complete. Liked: {likes_count}, Commented: {comments_count}")
+        
+        if likes_count > 0 or comments_count > 0:
+            self.client._notify(
+                f"✅ <b>Like/Comment Module Complete</b>\n\n"
+                f"❤️ Likes: {likes_count}\n"
+                f"💬 Comments: {comments_count}\n"
+                f"👥 Interacted with {num_to_interact} followers"
+            )

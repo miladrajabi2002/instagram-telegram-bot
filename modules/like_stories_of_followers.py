@@ -24,29 +24,29 @@ class LikeStoriesOfFollowers:
         self.module_name = "like_stories"
 
     def run(self):
-        """Schedule the story viewing task."""
+        """Execute the story viewing logic directly."""
         logger.info("Starting like stories of followers module")
         
-        # Schedule task
-        task = {
-            'type': 'like_stories',
-            'function': self._execute,
-            'interval': config.TASK_INTERVALS.get('like_stories', 7200)  # 2 hours
-        }
-        
-        self.scheduler.add_task(task)
-        logger.info("Like stories task scheduled")
+        try:
+            self._execute()
+            logger.info("✅ Like stories module completed")
+        except Exception as e:
+            logger.error(f"❌ Like stories module failed: {e}", exc_info=True)
 
     def _execute(self):
         """Execute the story viewing logic."""
         logger.info("Executing like stories task")
         
         # Get followers from DATABASE (not API!)
-        logger.info("💾 Getting followers from database...")
+        logger.info("📂 Getting followers from database...")
         followers = self.client.get_followers_from_db(limit=20)
         
         if not followers:
             logger.warning("⚠️ No followers in database")
+            self.client._notify(
+                "⚠️ <b>No followers found!</b>\n\n"
+                "Please use /import_followers to add followers."
+            )
             return
         
         logger.info(f"Got {len(followers)} followers from database")
@@ -95,3 +95,9 @@ class LikeStoriesOfFollowers:
                 continue
         
         logger.info(f"✅ Story viewing complete. Viewed {stories_viewed} stories")
+        
+        if stories_viewed > 0:
+            self.client._notify(
+                f"✅ <b>Stories Module Complete</b>\n\n"
+                f"👁️ Viewed {stories_viewed} stories from {num_to_check} followers"
+            )
