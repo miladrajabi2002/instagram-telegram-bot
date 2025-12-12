@@ -35,6 +35,10 @@ class InstagramClient:
         self.password = password
         self.telegram_notifier = telegram_notifier
         self.client = Client()
+        
+        # Set human-like delays (5-15 seconds)
+        self.client.delay_range = [5, 15]
+        
         self.db = Database()
         self.session_file = config.SESSION_DIR / f"{username}_session.json"
         self.is_logged_in = False
@@ -157,11 +161,8 @@ class InstagramClient:
         min_delay = min_delay or config.MIN_ACTION_DELAY
         max_delay = max_delay or config.MAX_ACTION_DELAY
         
-        # Use log-normal distribution for more realistic delays
-        mean = (min_delay + max_delay) / 2
-        sigma = (max_delay - min_delay) / 6  # ~99.7% within range
-        delay = random.lognormvariate(mean, sigma)
-        delay = max(min_delay, min(max_delay, delay))
+        # Random delay between min and max
+        delay = random.uniform(min_delay, max_delay)
         
         logger.debug(f"Waiting {delay:.1f} seconds...")
         time.sleep(delay)
