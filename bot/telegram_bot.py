@@ -128,8 +128,14 @@ class TelegramBot:
         
         text = (
             "🤖 <b>Instagram Automation Bot</b>\n\n"
-            "Welcome! This bot helps you automate Instagram tasks safely.\n\n"
-            "Use /help to see available commands."
+            "Welcome! This bot helps you automate Instagram tasks safely and efficiently.\n\n"
+            "🔒 <b>Features:</b>\n"
+            "• Safe follow/unfollow with rate limiting\n"
+            "• Automated story viewing\n"
+            "• Smart caching system (no duplicate requests)\n"
+            "• Human-like delays (5-15 seconds)\n"
+            "• Real-time activity reports\n\n"
+            "📚 Use /help to see all available commands."
         )
         await update.message.reply_text(text, parse_mode='HTML')
 
@@ -139,24 +145,60 @@ class TelegramBot:
             return
         
         text = (
-            "<b>📊 Commands:</b>\n\n"
-            "<b>Setup:</b>\n"
-            "/login - Login to Instagram\n\n"
-            "<b>Manual Actions:</b>\n"
+            "<b>📚 Complete Command Guide</b>\n\n"
+            
+            "<b>🔑 1. Setup & Login</b>\n"
+            "/login - Login to Instagram\n"
+            "<i>Example: /login</i>\n"
+            "<i>Note: You'll be prompted for 2FA if enabled</i>\n\n"
+            
+            "<b>👤 2. Manual Actions</b>\n"
             "/follow <username> - Follow a user\n"
+            "<i>Example: /follow cristiano</i>\n\n"
+            
             "/unfollow <username> - Unfollow a user\n"
-            "/like <post_url> - Like a post\n\n"
-            "<b>Automation:</b>\n"
-            "/start_scheduler - Start automation\n"
-            "/stop_scheduler - Stop automation\n"
-            "/pause - Pause tasks\n"
-            "/resume - Resume tasks\n\n"
-            "<b>Info:</b>\n"
-            "/status - Check bot status\n"
-            "/stats - View statistics\n"
+            "<i>Example: /unfollow username</i>\n\n"
+            
+            "/like <post_url> - Like a post\n"
+            "<i>Example: /like https://instagram.com/p/ABC123/</i>\n\n"
+            
+            "<b>⚙️ 3. Automation (Scheduler)</b>\n"
+            "/start_scheduler - Start automated tasks\n"
+            "<i>Runs follow, story view, and unfollow modules</i>\n\n"
+            
+            "/stop_scheduler - Stop all automation\n"
+            "/pause - Pause tasks temporarily\n"
+            "/resume - Resume paused tasks\n\n"
+            
+            "<b>📊 4. Statistics & Reports</b>\n"
+            "/status - Check bot and scheduler status\n"
+            "<i>Shows login status, queue size, completed tasks</i>\n\n"
+            
+            "/stats - View 7-day statistics\n"
+            "<i>Shows follows, likes, comments, story views</i>\n\n"
+            
             "/report - Daily activity report\n"
-            "/limits - View rate limits\n"
-            "/logs - View recent logs\n"
+            "<i>Shows today's activity with percentages</i>\n\n"
+            
+            "<b>⚠️ 5. Settings & Info</b>\n"
+            "/limits - View current rate limits\n"
+            "<i>Shows daily/hourly limits and action delays</i>\n\n"
+            
+            "/logs - View recent activity logs\n"
+            "<i>Last 50 log entries</i>\n\n"
+            
+            "<b>🔒 Safety Features:</b>\n"
+            "• Human-like delays: 5-15 seconds\n"
+            "• Rate limiting: Max 30 follows/day\n"
+            "• Smart caching: No duplicate requests\n"
+            "• Session management: Auto re-login\n\n"
+            
+            "<b>💾 Cache System:</b>\n"
+            "Followers list cached for 1 hour\n"
+            "No repeated Instagram requests\n"
+            "Automatic database backup\n\n"
+            
+            "🆘 Need more help? Check /status first!"
         )
         await update.message.reply_text(text, parse_mode='HTML')
 
@@ -217,7 +259,14 @@ class TelegramBot:
             return
         
         if not context.args:
-            await update.message.reply_text("📝 Usage: /follow <username>")
+            await update.message.reply_text(
+                "📝 <b>Usage:</b> /follow <username>\n\n"
+                "<b>Examples:</b>\n"
+                "/follow cristiano\n"
+                "/follow @username\n\n"
+                "<i>Note: Delay 5-15 seconds will be applied</i>",
+                parse_mode='HTML'
+            )
             return
         
         username = context.args[0].replace('@', '')
@@ -263,7 +312,7 @@ class TelegramBot:
                 await self.update_message(
                     msg.message_id,
                     f"❌ <b>Failed to follow @{username}</b>\n\n"
-                    f"⚠️ Check logs for details."
+                    f"⚠️ Check logs for details: /logs"
                 )
                 
         except Exception as e:
@@ -280,7 +329,12 @@ class TelegramBot:
             return
         
         if not context.args:
-            await update.message.reply_text("📝 Usage: /unfollow <username>")
+            await update.message.reply_text(
+                "📝 <b>Usage:</b> /unfollow <username>\n\n"
+                "<b>Example:</b>\n"
+                "/unfollow username",
+                parse_mode='HTML'
+            )
             return
         
         username = context.args[0].replace('@', '')
@@ -333,7 +387,12 @@ class TelegramBot:
             return
         
         if not context.args:
-            await update.message.reply_text("📝 Usage: /like <post_url>")
+            await update.message.reply_text(
+                "📝 <b>Usage:</b> /like <post_url>\n\n"
+                "<b>Example:</b>\n"
+                "/like https://instagram.com/p/ABC123/",
+                parse_mode='HTML'
+            )
             return
         
         post_url = context.args[0]
