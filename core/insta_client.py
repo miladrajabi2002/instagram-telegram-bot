@@ -449,55 +449,35 @@ class InstagramClient:
             logger.info(f"💾 Using cached {len(cached)} followers for user {user_id}")
             return cached
         
-        # Fetch from API with manual pagination (12 per page)
+        # Fetch from API - use standard method which handles pagination internally
         logger.info(f"📡 Fetching up to {amount} followers for user {user_id}...")
         all_followers = []
         
         try:
-            # Use Private API directly with pagination
-            max_id = None
-            page = 1
+            # Use built-in method - it will fetch in chunks
+            result = self._safe_api_call(self.client.user_followers, user_id, amount)
             
-            while len(all_followers) < amount:
-                logger.info(f"📄 Fetching page {page} (have {len(all_followers)} so far)...")
-                
-                # Fetch one page (12 followers)
-                result = self.client.user_followers_gql(user_id, amount=12, end_cursor=max_id)
-                
-                if not result:
-                    logger.warning("⚠️ No more followers or challenge detected")
-                    break
-                
-                # Extract followers from result
-                page_followers = list(result.values())
-                
-                if not page_followers:
-                    logger.info("✅ No more followers available")
-                    break
-                
-                # Add to collection
-                all_followers.extend(page_followers)
-                logger.info(f"✅ Got {len(page_followers)} followers (total: {len(all_followers)})")
-                
-                # Save incrementally to cache and database
+            if not result:
+                logger.warning("⚠️ No followers returned or API error")
+                return []
+            
+            # Convert dict to list
+            all_followers = list(result.values())
+            logger.info(f"✅ Successfully fetched {len(all_followers)} followers")
+            
+            # Cache and save to database
+            if all_followers:
                 self.cache.set(cache_key, all_followers)
-                for follower in page_followers:
+                logger.info(f"💾 Cached {len(all_followers)} followers")
+                
+                # Save to database
+                for follower in all_followers:
                     self.db.add_follow_record(
                         str(follower.pk),
                         follower.username,
-                        f"my_follower"
+                        "my_follower"
                     )
-                logger.info(f"💾 Saved {len(page_followers)} followers to cache and database")
-                
-                # Check if we have enough
-                if len(all_followers) >= amount:
-                    logger.info(f"✅ Reached target of {amount} followers")
-                    break
-                
-                # Get next page cursor
-                # Note: instagrapi returns dict, we need to handle pagination
-                # For now, we'll stop after getting some results
-                break  # TODO: Implement proper cursor pagination
+                logger.info(f"💾 Saved {len(all_followers)} followers to database")
                 
         except ChallengeRequired as e:
             logger.error(f"🚨 Challenge required while fetching followers")
@@ -509,11 +489,6 @@ class InstagramClient:
         except Exception as e:
             logger.error(f"❌ Error fetching followers: {str(e)[:100]}")
             self._notify(f"❌ Error fetching followers: {str(e)[:200]}")
-        
-        # Cache whatever we got
-        if all_followers:
-            self.cache.set(cache_key, all_followers)
-            logger.info(f"💾 Final cache: {len(all_followers)} followers")
         
         return all_followers
 
