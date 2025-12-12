@@ -39,17 +39,6 @@ CREATE TABLE IF NOT EXISTS settings (
     INDEX idx_setting_key (setting_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Session data table (optional, for encrypted session backup)
-CREATE TABLE IF NOT EXISTS sessions (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    username VARCHAR(255) NOT NULL UNIQUE,
-    session_data TEXT NOT NULL,
-    encrypted BOOLEAN DEFAULT TRUE,
-    last_login DATETIME NOT NULL,
-    updated_at DATETIME NOT NULL,
-    INDEX idx_username (username)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
 -- Bot statistics table
 CREATE TABLE IF NOT EXISTS bot_statistics (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -63,9 +52,3 @@ CREATE TABLE IF NOT EXISTS bot_statistics (
     created_at DATETIME NOT NULL,
     UNIQUE KEY idx_stat_date (stat_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- Create default user for the bot (CHANGE PASSWORD!)
--- Uncomment and modify if needed:
--- CREATE USER IF NOT EXISTS 'instagram_bot_user'@'localhost' IDENTIFIED BY 'CHANGE_THIS_PASSWORD';
--- GRANT ALL PRIVILEGES ON instagram_bot.* TO 'instagram_bot_user'@'localhost';
--- FLUSH PRIVILEGES;
