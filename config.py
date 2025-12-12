@@ -48,6 +48,14 @@ RATE_LIMITS = {
     'unfollows_per_day': int(os.getenv('MAX_UNFOLLOWS_PER_DAY', 30)),
 }
 
+# Task Intervals (in seconds) - How often each module runs
+TASK_INTERVALS = {
+    'follow': int(os.getenv('FOLLOW_INTERVAL', 10800)),        # 3 hours
+    'like_stories': int(os.getenv('STORIES_INTERVAL', 7200)),  # 2 hours
+    'comment': int(os.getenv('COMMENT_INTERVAL', 3600)),       # 1 hour
+    'unfollow': int(os.getenv('UNFOLLOW_INTERVAL', 14400)),    # 4 hours
+}
+
 # Unfollow Settings
 UNFOLLOW_AFTER_DAYS = int(os.getenv('UNFOLLOW_AFTER_DAYS', 7))
 
