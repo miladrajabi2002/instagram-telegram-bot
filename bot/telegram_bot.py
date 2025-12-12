@@ -48,12 +48,13 @@ class TelegramBot:
 
     def _register_handlers(self):
         """Register command and callback handlers."""
-        # Commands
+        # Commands - ORDER MATTERS! More specific first
         self.app.add_handler(CommandHandler("start", self.cmd_start))
         self.app.add_handler(CommandHandler("help", self.cmd_help))
         self.app.add_handler(CommandHandler("login", self.cmd_login))
         self.app.add_handler(CommandHandler("status", self.cmd_status))
         self.app.add_handler(CommandHandler("stats", self.cmd_stats))
+        self.app.add_handler(CommandHandler("report", self.cmd_report))
         
         # Manual actions
         self.app.add_handler(CommandHandler("follow", self.cmd_follow))
@@ -69,13 +70,15 @@ class TelegramBot:
         # Info
         self.app.add_handler(CommandHandler("limits", self.cmd_limits))
         self.app.add_handler(CommandHandler("logs", self.cmd_logs))
-        self.app.add_handler(CommandHandler("report", self.cmd_report))
         
         # Callback queries
         self.app.add_handler(CallbackQueryHandler(self.handle_callback))
         
-        # Message handler for 2FA
+        # Message handlers - TEXT WITHOUT COMMANDS (2FA + unknown)
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
+        
+        # Unknown command handler - MUST BE LAST
+        self.app.add_handler(MessageHandler(filters.COMMAND, self.handle_unknown_command))
 
     def _check_admin(self, user_id: int) -> bool:
         """Check if user is admin.
@@ -142,6 +145,7 @@ class TelegramBot:
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /help command."""
         if not self._check_admin(update.effective_user.id):
+            await update.message.reply_text("❌ Unauthorized")
             return
         
         text = (
@@ -153,13 +157,13 @@ class TelegramBot:
             "<i>Note: You'll be prompted for 2FA if enabled</i>\n\n"
             
             "<b>👤 2. Manual Actions</b>\n"
-            "/follow <username> - Follow a user\n"
+            "/follow &lt;username&gt; - Follow a user\n"
             "<i>Example: /follow cristiano</i>\n\n"
             
-            "/unfollow <username> - Unfollow a user\n"
+            "/unfollow &lt;username&gt; - Unfollow a user\n"
             "<i>Example: /unfollow username</i>\n\n"
             
-            "/like <post_url> - Like a post\n"
+            "/like &lt;post_url&gt; - Like a post\n"
             "<i>Example: /like https://instagram.com/p/ABC123/</i>\n\n"
             
             "<b>⚙️ 3. Automation (Scheduler)</b>\n"
@@ -199,6 +203,20 @@ class TelegramBot:
             "Automatic database backup\n\n"
             
             "🆘 Need more help? Check /status first!"
+        )
+        await update.message.reply_text(text, parse_mode='HTML')
+
+    async def handle_unknown_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle unknown commands."""
+        if not self._check_admin(update.effective_user.id):
+            return
+        
+        # Send start message for unknown commands
+        text = (
+            "❌ <b>Unknown command!</b>\n\n"
+            "🤖 <b>Instagram Automation Bot</b>\n\n"
+            "Welcome! This bot helps you automate Instagram tasks safely.\n\n"
+            "📚 Use /help to see all available commands."
         )
         await update.message.reply_text(text, parse_mode='HTML')
 
@@ -260,7 +278,7 @@ class TelegramBot:
         
         if not context.args:
             await update.message.reply_text(
-                "📝 <b>Usage:</b> /follow <username>\n\n"
+                "📝 <b>Usage:</b> /follow &lt;username&gt;\n\n"
                 "<b>Examples:</b>\n"
                 "/follow cristiano\n"
                 "/follow @username\n\n"
@@ -330,7 +348,7 @@ class TelegramBot:
         
         if not context.args:
             await update.message.reply_text(
-                "📝 <b>Usage:</b> /unfollow <username>\n\n"
+                "📝 <b>Usage:</b> /unfollow &lt;username&gt;\n\n"
                 "<b>Example:</b>\n"
                 "/unfollow username",
                 parse_mode='HTML'
@@ -388,7 +406,7 @@ class TelegramBot:
         
         if not context.args:
             await update.message.reply_text(
-                "📝 <b>Usage:</b> /like <post_url>\n\n"
+                "📝 <b>Usage:</b> /like &lt;post_url&gt;\n\n"
                 "<b>Example:</b>\n"
                 "/like https://instagram.com/p/ABC123/",
                 parse_mode='HTML'
@@ -660,7 +678,7 @@ class TelegramBot:
         pass
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle text messages (for 2FA code)."""
+        """Handle text messages (for 2FA code or unknown text)."""
         if not self._check_admin(update.effective_user.id):
             return
         
@@ -683,6 +701,13 @@ class TelegramBot:
                     }
                 else:
                     await update.message.reply_text("❌ Invalid code. Please try again.")
+        else:
+            # Unknown text message - show help
+            text = (
+                "ℹ️ <b>I don't understand that message.</b>\n\n"
+                "📚 Use /help to see all available commands."
+            )
+            await update.message.reply_text(text, parse_mode='HTML')
 
     def run(self):
         """Start the bot."""
