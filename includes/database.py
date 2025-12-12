@@ -1,6 +1,6 @@
 """Database connection and operations."""
 import logging
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime
 import mysql.connector
 from mysql.connector import Error
@@ -155,6 +155,32 @@ class Database:
         """
         self.execute_query(query, (user_id, username, datetime.now(), source))
 
+    def get_active_follows(self, limit: int = 50) -> List[Tuple[str, str]]:
+        """Get active follows (not unfollowed).
+        
+        Args:
+            limit: Maximum number of records to return
+            
+        Returns:
+            List of tuples (user_id, username)
+        """
+        query = """
+            SELECT user_id, username FROM follows
+            WHERE unfollowed_at IS NULL
+            ORDER BY followed_at DESC
+            LIMIT %s
+        """
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(query, (limit,))
+                results = cursor.fetchall()
+                cursor.close()
+                return results
+        except Error as e:
+            logger.error(f"Get active follows failed: {e}")
+            return []
+
     def get_users_to_unfollow(self, days: int) -> List[Dict]:
         """Get users to unfollow after specified days.
         
@@ -180,6 +206,14 @@ class Database:
         """
         query = "UPDATE follows SET unfollowed_at = %s WHERE user_id = %s"
         self.execute_query(query, (datetime.now(), user_id))
+
+    def add_unfollow_record(self, user_id: str):
+        """Mark user as unfollowed (alias for mark_unfollowed).
+        
+        Args:
+            user_id: Instagram user ID
+        """
+        self.mark_unfollowed(user_id)
 
     # Settings
 
