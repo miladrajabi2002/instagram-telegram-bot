@@ -1,10 +1,11 @@
 """Telegram bot for Instagram automation control."""
 import logging
 import asyncio
+import json
 from typing import Optional
 from datetime import datetime
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Document
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -41,15 +42,18 @@ class TelegramBot:
         self.modules = {}
         self.is_running = False
         self.awaiting_2fa = False
-        self.current_message_id = None  # For updating messages
+        self.awaiting_json_import = False  # For JSON import
+        self.json_import_state = {}  # Store import state
+        self.current_message_id = None
         
         # Register handlers
         self._register_handlers()
 
     def _register_handlers(self):
         """Register command and callback handlers."""
-        # Commands - ORDER MATTERS! More specific first
+        # Commands
         self.app.add_handler(CommandHandler("start", self.cmd_start))
+        self.app.add_handler(CommandHandler("menu", self.cmd_menu))
         self.app.add_handler(CommandHandler("help", self.cmd_help))
         self.app.add_handler(CommandHandler("login", self.cmd_login))
         self.app.add_handler(CommandHandler("status", self.cmd_status))
@@ -67,6 +71,9 @@ class TelegramBot:
         self.app.add_handler(CommandHandler("pause", self.cmd_pause))
         self.app.add_handler(CommandHandler("resume", self.cmd_resume))
         
+        # Manual import
+        self.app.add_handler(CommandHandler("import_followers", self.cmd_import_followers))
+        
         # Info
         self.app.add_handler(CommandHandler("limits", self.cmd_limits))
         self.app.add_handler(CommandHandler("logs", self.cmd_logs))
@@ -74,29 +81,21 @@ class TelegramBot:
         # Callback queries
         self.app.add_handler(CallbackQueryHandler(self.handle_callback))
         
-        # Message handlers - TEXT WITHOUT COMMANDS (2FA + unknown)
+        # Document handler for JSON import
+        self.app.add_handler(MessageHandler(filters.Document.ALL, self.handle_document))
+        
+        # Text message handler (2FA + unknown)
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
         
-        # Unknown command handler - MUST BE LAST
+        # Unknown command
         self.app.add_handler(MessageHandler(filters.COMMAND, self.handle_unknown_command))
 
     def _check_admin(self, user_id: int) -> bool:
-        """Check if user is admin.
-        
-        Args:
-            user_id: Telegram user ID
-            
-        Returns:
-            bool: True if admin
-        """
+        """Check if user is admin."""
         return user_id == config.TELEGRAM_ADMIN_ID
 
     async def send_notification(self, message: str):
-        """Send notification to admin.
-        
-        Args:
-            message: Notification message
-        """
+        """Send notification to admin."""
         try:
             await self.app.bot.send_message(
                 chat_id=config.TELEGRAM_ADMIN_ID,
@@ -107,12 +106,7 @@ class TelegramBot:
             logger.error(f"Failed to send notification: {e}")
 
     async def update_message(self, message_id: int, text: str):
-        """Update existing message.
-        
-        Args:
-            message_id: Message ID to update
-            text: New text
-        """
+        """Update existing message."""
         try:
             await self.app.bot.edit_message_text(
                 chat_id=config.TELEGRAM_ADMIN_ID,
@@ -131,78 +125,68 @@ class TelegramBot:
         
         text = (
             "🤖 <b>Instagram Automation Bot</b>\n\n"
-            "Welcome! This bot helps you automate Instagram tasks safely and efficiently.\n\n"
-            "🔒 <b>Features:</b>\n"
-            "• Safe follow/unfollow with rate limiting\n"
-            "• Automated story viewing\n"
-            "• Smart caching system (no duplicate requests)\n"
-            "• Human-like delays (5-15 seconds)\n"
-            "• Real-time activity reports\n\n"
-            "📚 Use /help to see all available commands."
+            "Welcome! This bot helps you automate Instagram tasks safely.\n\n"
+            "📚 Use /menu for main menu or /help for commands."
         )
         await update.message.reply_text(text, parse_mode='HTML')
+
+    async def cmd_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /menu command - Show main menu."""
+        if not self._check_admin(update.effective_user.id):
+            return
+        
+        keyboard = [
+            [InlineKeyboardButton("🔑 Login to Instagram", callback_data="menu_login")],
+            [InlineKeyboardButton("📊 Status & Stats", callback_data="menu_stats")],
+            [InlineKeyboardButton("⚙️ Automation", callback_data="menu_automation")],
+            [InlineKeyboardButton("👤 Manual Actions", callback_data="menu_manual")],
+            [InlineKeyboardButton("📎 Manual Import", callback_data="menu_import")],
+            [InlineKeyboardButton("ℹ️ Info & Settings", callback_data="menu_info")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        text = (
+            "🏠 <b>Main Menu</b>\n\n"
+            "Select an option:"
+        )
+        
+        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='HTML')
 
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /help command."""
         if not self._check_admin(update.effective_user.id):
-            await update.message.reply_text("❌ Unauthorized")
             return
         
         text = (
             "<b>📚 Complete Command Guide</b>\n\n"
             
-            "<b>🔑 1. Setup & Login</b>\n"
+            "<b>🔑 Setup</b>\n"
+            "/menu - Main menu (recommended!)\n"
             "/login - Login to Instagram\n"
-            "<i>Example: /login</i>\n"
-            "<i>Note: You'll be prompted for 2FA if enabled</i>\n\n"
+            "/status - Check bot status\n\n"
             
-            "<b>👤 2. Manual Actions</b>\n"
-            "/follow &lt;username&gt; - Follow a user\n"
-            "<i>Example: /follow cristiano</i>\n\n"
+            "<b>👤 Manual Actions</b>\n"
+            "/follow &lt;username&gt; - Follow user\n"
+            "/unfollow &lt;username&gt; - Unfollow user\n"
+            "/like &lt;post_url&gt; - Like post\n\n"
             
-            "/unfollow &lt;username&gt; - Unfollow a user\n"
-            "<i>Example: /unfollow username</i>\n\n"
+            "<b>⚙️ Automation</b>\n"
+            "/start_scheduler - Start tasks\n"
+            "/stop_scheduler - Stop tasks\n"
+            "/pause - Pause tasks\n"
+            "/resume - Resume tasks\n\n"
             
-            "/like &lt;post_url&gt; - Like a post\n"
-            "<i>Example: /like https://instagram.com/p/ABC123/</i>\n\n"
+            "<b>📎 Manual Import</b>\n"
+            "/import_followers - Import followers from JSON\n"
+            "<i>Get Instagram GraphQL URL and paste JSON response</i>\n\n"
             
-            "<b>⚙️ 3. Automation (Scheduler)</b>\n"
-            "/start_scheduler - Select tasks to run\n"
-            "<i>Choose: Follow, Stories, Comment, Unfollow, or All</i>\n\n"
+            "<b>📊 Statistics</b>\n"
+            "/stats - 7-day statistics\n"
+            "/report - Daily report\n"
+            "/limits - Rate limits\n"
+            "/logs - Recent logs\n\n"
             
-            "/stop_scheduler - Stop all automation\n"
-            "/pause - Pause tasks temporarily\n"
-            "/resume - Resume paused tasks\n\n"
-            
-            "<b>📊 4. Statistics & Reports</b>\n"
-            "/status - Check bot and scheduler status\n"
-            "<i>Shows login status, queue size, completed tasks</i>\n\n"
-            
-            "/stats - View 7-day statistics\n"
-            "<i>Shows follows, likes, comments, story views</i>\n\n"
-            
-            "/report - Daily activity report\n"
-            "<i>Shows today's activity with percentages</i>\n\n"
-            
-            "<b>⚠️ 5. Settings & Info</b>\n"
-            "/limits - View current rate limits\n"
-            "<i>Shows daily/hourly limits and action delays</i>\n\n"
-            
-            "/logs - View recent activity logs\n"
-            "<i>Last 50 log entries</i>\n\n"
-            
-            "<b>🔒 Safety Features:</b>\n"
-            "• Human-like delays: 5-15 seconds\n"
-            "• Rate limiting: Max 30 follows/day\n"
-            "• Smart caching: No duplicate requests\n"
-            "• Session management: Auto re-login\n\n"
-            
-            "<b>💾 Cache System:</b>\n"
-            "Followers list cached for 1 hour\n"
-            "No repeated Instagram requests\n"
-            "Automatic database backup\n\n"
-            
-            "🆘 Need more help? Check /status first!"
+            "🆘 Use /menu for easy access!"
         )
         await update.message.reply_text(text, parse_mode='HTML')
 
@@ -211,12 +195,9 @@ class TelegramBot:
         if not self._check_admin(update.effective_user.id):
             return
         
-        # Send start message for unknown commands
         text = (
             "❌ <b>Unknown command!</b>\n\n"
-            "🤖 <b>Instagram Automation Bot</b>\n\n"
-            "Welcome! This bot helps you automate Instagram tasks safely.\n\n"
-            "📚 Use /help to see all available commands."
+            "📚 Use /menu for main menu or /help for all commands."
         )
         await update.message.reply_text(text, parse_mode='HTML')
 
@@ -232,23 +213,19 @@ class TelegramBot:
         try:
             await update.message.reply_text("🔑 Logging in to Instagram...")
             
-            # Create client
             self.insta_client = InstagramClient(
                 username=config.INSTAGRAM_USERNAME,
                 password=config.INSTAGRAM_PASSWORD,
                 telegram_notifier=lambda msg: asyncio.create_task(self.send_notification(msg))
             )
             
-            # Create scheduler
             self.scheduler = TaskScheduler(
                 telegram_notifier=lambda msg: asyncio.create_task(self.send_notification(msg))
             )
             
-            # Attempt login
             success = self.insta_client.login()
             
             if success:
-                # Initialize modules
                 self.modules = {
                     'follow': FollowFollowersOfFollowers(self.insta_client, self.scheduler),
                     'stories': LikeStoriesOfFollowers(self.insta_client, self.scheduler),
@@ -267,22 +244,165 @@ class TelegramBot:
             logger.error(f"Login error: {e}", exc_info=True)
             await update.message.reply_text(f"❌ Login failed: {str(e)}")
 
+    async def cmd_import_followers(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /import_followers command."""
+        if not self._check_admin(update.effective_user.id):
+            return
+        
+        if not self.insta_client:
+            await update.message.reply_text("❌ Please /login first")
+            return
+        
+        user_id = self.insta_client.get_my_user_id()
+        if not user_id:
+            await update.message.reply_text("❌ Failed to get user ID")
+            return
+        
+        # Generate GraphQL URL
+        url = (
+            f"https://www.instagram.com/graphql/query/"
+            f"?variables=%7B%22id%22%3A%22{user_id}%22%2C%22include_reel%22%3Atrue%2C"
+            f"%22fetch_mutual%22%3Afalse%2C%22first%22%3A50%7D"
+            f"&query_hash=37479f2b8209594dde7facb0d904896a"
+        )
+        
+        self.awaiting_json_import = True
+        self.json_import_state = {
+            'user_id': user_id,
+            'total_imported': 0,
+            'pages': 0
+        }
+        
+        text = (
+            "📎 <b>Manual Follower Import</b>\n\n"
+            "<b>Step 1:</b> Open this URL in your browser (logged in to Instagram):\n"
+            f"<code>{url}</code>\n\n"
+            "<b>Step 2:</b> Copy the entire JSON response\n\n"
+            "<b>Step 3:</b> Save it as a .json or .txt file and send it here\n\n"
+            "<b>Or:</b> Just paste the JSON text directly\n\n"
+            "<i>For pagination, look for 'end_cursor' in the response and add:</i>\n"
+            f"<code>&variables={{...%2C%22after%22%3A%22CURSOR_HERE%22}}</code>"
+        )
+        
+        await update.message.reply_text(text, parse_mode='HTML')
+
+    async def handle_document(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle document uploads (JSON files)."""
+        if not self._check_admin(update.effective_user.id):
+            return
+        
+        if not self.awaiting_json_import:
+            return
+        
+        try:
+            document = update.message.document
+            
+            # Download file
+            file = await context.bot.get_file(document.file_id)
+            file_bytes = await file.download_as_bytearray()
+            file_content = file_bytes.decode('utf-8')
+            
+            # Parse and import
+            await self._import_followers_json(update, file_content)
+            
+        except Exception as e:
+            logger.error(f"Document handling error: {e}")
+            await update.message.reply_text(f"❌ Error: {str(e)}")
+
+    async def _import_followers_json(self, update: Update, json_content: str):
+        """Import followers from JSON content."""
+        try:
+            data = json.loads(json_content)
+            
+            # Parse Instagram GraphQL response
+            user_data = data.get('data', {}).get('user', {})
+            edge_followed_by = user_data.get('edge_followed_by', {})
+            edges = edge_followed_by.get('edges', [])
+            page_info = edge_followed_by.get('page_info', {})
+            
+            if not edges:
+                await update.message.reply_text("⚠️ No followers found in JSON")
+                return
+            
+            # Import followers
+            imported = 0
+            for edge in edges:
+                node = edge.get('node', {})
+                user_id = node.get('id')
+                username = node.get('username')
+                
+                if user_id and username:
+                    self.db.add_follow_record(user_id, username, "manual_import")
+                    imported += 1
+            
+            self.json_import_state['total_imported'] += imported
+            self.json_import_state['pages'] += 1
+            
+            # Check if more pages
+            has_next = page_info.get('has_next_page', False)
+            end_cursor = page_info.get('end_cursor', '')
+            
+            response_text = (
+                f"✅ <b>Imported {imported} followers!</b>\n\n"
+                f"📊 <b>Total:</b> {self.json_import_state['total_imported']} followers\n"
+                f"📄 <b>Pages:</b> {self.json_import_state['pages']}\n\n"
+            )
+            
+            if has_next and end_cursor:
+                user_id = self.json_import_state.get('user_id')
+                next_url = (
+                    f"https://www.instagram.com/graphql/query/"
+                    f"?variables=%7B%22id%22%3A%22{user_id}%22%2C%22include_reel%22%3Atrue%2C"
+                    f"%22fetch_mutual%22%3Afalse%2C%22first%22%3A50%2C"
+                    f"%22after%22%3A%22{end_cursor}%22%7D"
+                    f"&query_hash=37479f2b8209594dde7facb0d904896a"
+                )
+                
+                response_text += (
+                    "🔄 <b>More pages available!</b>\n\n"
+                    "Send next page JSON or click button:\n"
+                )
+                
+                keyboard = [
+                    [InlineKeyboardButton("📎 Get Next Page URL", callback_data="get_next_page")],
+                    [InlineKeyboardButton("✅ Finish Import", callback_data="finish_import")]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                # Store next URL
+                self.json_import_state['next_url'] = next_url
+                
+                await update.message.reply_text(
+                    response_text,
+                    reply_markup=reply_markup,
+                    parse_mode='HTML'
+                )
+            else:
+                response_text += "✅ <b>All pages imported!</b>"
+                self.awaiting_json_import = False
+                self.json_import_state = {}
+                
+                await update.message.reply_text(response_text, parse_mode='HTML')
+            
+        except json.JSONDecodeError as e:
+            await update.message.reply_text(f"❌ Invalid JSON: {str(e)}")
+        except Exception as e:
+            logger.error(f"Import error: {e}")
+            await update.message.reply_text(f"❌ Import failed: {str(e)}")
+
     async def cmd_follow(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /follow <username> command."""
+        """Handle /follow <username>."""
         if not self._check_admin(update.effective_user.id):
             return
         
         if not self.insta_client or not self.insta_client.is_logged_in:
-            await update.message.reply_text("❌ Please login first with /login")
+            await update.message.reply_text("❌ Please /login first")
             return
         
         if not context.args:
             await update.message.reply_text(
                 "📝 <b>Usage:</b> /follow &lt;username&gt;\n\n"
-                "<b>Examples:</b>\n"
-                "/follow cristiano\n"
-                "/follow @username\n\n"
-                "<i>Note: Delay 5-15 seconds will be applied</i>",
+                "<b>Example:</b> /follow cristiano",
                 parse_mode='HTML'
             )
             return
@@ -290,47 +410,38 @@ class TelegramBot:
         username = context.args[0].replace('@', '')
         
         try:
-            # Initial message
             msg = await update.message.reply_text(
                 f"🔍 <b>Looking up @{username}...</b>",
                 parse_mode='HTML'
             )
             
-            # Get user info
             user_info = self.insta_client.client.user_info_by_username(username)
             user_id = user_info.pk
             
             await self.update_message(
                 msg.message_id,
                 f"👤 <b>Following @{username}</b>\n\n"
-                f"⏱️ Preparing to follow...\n"
-                f"<i>Waiting for human-like delay ({config.MIN_ACTION_DELAY}-{config.MAX_ACTION_DELAY}s)</i>"
+                f"⏱️ Waiting {config.MIN_ACTION_DELAY}-{config.MAX_ACTION_DELAY}s..."
             )
             
-            # Follow
             success = self.insta_client.safe_follow(user_id)
             
             if success:
-                # Get current stats
                 stats = self.insta_client.get_stats()
-                
                 await self.update_message(
                     msg.message_id,
-                    f"✅ <b>Successfully followed @{username}</b>\n\n"
-                    f"📊 <b>Today's Activity:</b>\n"
+                    f"✅ <b>Followed @{username}</b>\n\n"
+                    f"📊 <b>Today:</b>\n"
                     f"• Follows: {stats.get('follow', 0)}\n"
-                    f"• Likes: {stats.get('like', 0)}\n"
-                    f"• Comments: {stats.get('comment', 0)}\n"
-                    f"• Story Views: {stats.get('story_view', 0)}"
+                    f"• Likes: {stats.get('like', 0)}"
                 )
                 
                 self.db.add_follow_record(str(user_id), username, "manual")
-                self.db.log_action('follow', str(user_id), True, f"Manual follow via Telegram")
+                self.db.log_action('follow', str(user_id), True, "Manual follow")
             else:
                 await self.update_message(
                     msg.message_id,
-                    f"❌ <b>Failed to follow @{username}</b>\n\n"
-                    f"⚠️ Check logs for details: /logs"
+                    f"❌ <b>Failed to follow @{username}</b>"
                 )
                 
         except Exception as e:
@@ -338,19 +449,17 @@ class TelegramBot:
             await update.message.reply_text(f"❌ Error: {str(e)}")
 
     async def cmd_unfollow(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /unfollow <username> command."""
+        """Handle /unfollow <username>."""
         if not self._check_admin(update.effective_user.id):
             return
         
         if not self.insta_client or not self.insta_client.is_logged_in:
-            await update.message.reply_text("❌ Please login first with /login")
+            await update.message.reply_text("❌ Please /login first")
             return
         
         if not context.args:
             await update.message.reply_text(
-                "📝 <b>Usage:</b> /unfollow &lt;username&gt;\n\n"
-                "<b>Example:</b>\n"
-                "/unfollow username",
+                "📝 <b>Usage:</b> /unfollow &lt;username&gt;",
                 parse_mode='HTML'
             )
             return
@@ -363,28 +472,19 @@ class TelegramBot:
                 parse_mode='HTML'
             )
             
-            # Get user info
             user_info = self.insta_client.client.user_info_by_username(username)
             user_id = user_info.pk
             
-            await self.update_message(
-                msg.message_id,
-                f"👤 <b>Unfollowing @{username}</b>\n\n"
-                f"⏱️ Preparing to unfollow...\n"
-                f"<i>Waiting for human-like delay</i>"
-            )
-            
-            # Unfollow
             success = self.insta_client.safe_unfollow(user_id)
             
             if success:
                 await self.update_message(
                     msg.message_id,
-                    f"✅ <b>Successfully unfollowed @{username}</b>"
+                    f"✅ <b>Unfollowed @{username}</b>"
                 )
                 
                 self.db.add_unfollow_record(str(user_id))
-                self.db.log_action('unfollow', str(user_id), True, f"Manual unfollow via Telegram")
+                self.db.log_action('unfollow', str(user_id), True, "Manual unfollow")
             else:
                 await self.update_message(
                     msg.message_id,
@@ -396,19 +496,17 @@ class TelegramBot:
             await update.message.reply_text(f"❌ Error: {str(e)}")
 
     async def cmd_like(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /like <post_url> command."""
+        """Handle /like <post_url>."""
         if not self._check_admin(update.effective_user.id):
             return
         
         if not self.insta_client or not self.insta_client.is_logged_in:
-            await update.message.reply_text("❌ Please login first with /login")
+            await update.message.reply_text("❌ Please /login first")
             return
         
         if not context.args:
             await update.message.reply_text(
-                "📝 <b>Usage:</b> /like &lt;post_url&gt;\n\n"
-                "<b>Example:</b>\n"
-                "/like https://instagram.com/p/ABC123/",
+                "📝 <b>Usage:</b> /like &lt;post_url&gt;",
                 parse_mode='HTML'
             )
             return
@@ -416,54 +514,31 @@ class TelegramBot:
         post_url = context.args[0]
         
         try:
-            msg = await update.message.reply_text(
-                f"👍 <b>Preparing to like post...</b>",
-                parse_mode='HTML'
-            )
-            
-            # Get media ID from URL
             media_id = self.insta_client.client.media_pk_from_url(post_url)
-            
-            await self.update_message(
-                msg.message_id,
-                f"👍 <b>Liking post...</b>\n\n"
-                f"⏱️ Waiting for human-like delay..."
-            )
-            
-            # Like
             success = self.insta_client.safe_like(media_id)
             
             if success:
                 stats = self.insta_client.get_stats()
-                
-                await self.update_message(
-                    msg.message_id,
-                    f"✅ <b>Post liked successfully</b>\n\n"
-                    f"📊 <b>Today's Activity:</b>\n"
-                    f"• Likes: {stats.get('like', 0)}\n"
-                    f"• Follows: {stats.get('follow', 0)}"
+                await update.message.reply_text(
+                    f"✅ <b>Post liked!</b>\n\n"
+                    f"📊 Likes today: {stats.get('like', 0)}",
+                    parse_mode='HTML'
                 )
-                
-                self.db.log_action('like', str(media_id), True, f"Manual like via Telegram")
+                self.db.log_action('like', str(media_id), True, "Manual like")
             else:
-                await self.update_message(
-                    msg.message_id,
-                    f"❌ <b>Failed to like post</b>"
-                )
+                await update.message.reply_text("❌ Failed to like")
                 
         except Exception as e:
             logger.error(f"Like error: {e}")
             await update.message.reply_text(f"❌ Error: {str(e)}")
 
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /status command."""
+        """Handle /status."""
         if not self._check_admin(update.effective_user.id):
             return
         
-        # Instagram status
         insta_status = "✅ Logged in" if (self.insta_client and self.insta_client.is_logged_in) else "❌ Not logged in"
         
-        # Scheduler status
         scheduler_status = "❌ Not started"
         if self.scheduler:
             if self.scheduler.is_paused():
@@ -481,21 +556,18 @@ class TelegramBot:
             f"<b>Scheduler:</b> {scheduler_status}\n"
             f"<b>Queue:</b> {stats.get('queue_size', 0)} tasks\n"
             f"<b>Completed:</b> {stats.get('tasks_completed', 0)}\n"
-            f"<b>Failed:</b> {stats.get('tasks_failed', 0)}\n"
+            f"<b>Failed:</b> {stats.get('tasks_failed', 0)}"
         )
         
         await update.message.reply_text(text, parse_mode='HTML')
 
     async def cmd_stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /stats command."""
+        """Handle /stats."""
         if not self._check_admin(update.effective_user.id):
             return
         
         try:
-            # Get statistics from database
             db_stats = self.db.get_statistics(days=7)
-            
-            # Get action counts from client
             client_stats = self.insta_client.get_stats() if self.insta_client else {}
             
             text = (
@@ -508,9 +580,7 @@ class TelegramBot:
                 f"<b>Active Follows:</b> {db_stats.get('active_follows', 0)}\n\n"
                 "<b>Current Session:</b>\n"
                 f"Follows: {client_stats.get('follow', 0)}\n"
-                f"Likes: {client_stats.get('like', 0)}\n"
-                f"Comments: {client_stats.get('comment', 0)}\n"
-                f"Story Views: {client_stats.get('story_view', 0)}\n"
+                f"Likes: {client_stats.get('like', 0)}"
             )
             
             await update.message.reply_text(text, parse_mode='HTML')
@@ -520,35 +590,24 @@ class TelegramBot:
             await update.message.reply_text(f"❌ Error: {str(e)}")
 
     async def cmd_report(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /report command - Daily activity report."""
+        """Handle /report."""
         if not self._check_admin(update.effective_user.id):
             return
         
         try:
-            # Get today's statistics
             db_stats = self.db.get_statistics(days=1)
-            client_stats = self.insta_client.get_stats() if self.insta_client else {}
             
-            # Calculate percentages of daily limits
             follows_pct = (db_stats.get('follow_count', 0) / config.RATE_LIMITS['follows_per_day']) * 100
             likes_pct = (db_stats.get('like_count', 0) / config.RATE_LIMITS['likes_per_day']) * 100
             
             text = (
-                f"<b>📅 Daily Activity Report</b>\n"
+                f"<b>📅 Daily Report</b>\n"
                 f"<i>{datetime.now().strftime('%Y-%m-%d')}</i>\n\n"
-                
-                f"<b>👥 Follows:</b> {db_stats.get('follow_count', 0)}/{config.RATE_LIMITS['follows_per_day']} "
-                f"({follows_pct:.0f}%)\n"
-                
-                f"<b>👍 Likes:</b> {db_stats.get('like_count', 0)}/{config.RATE_LIMITS['likes_per_day']} "
-                f"({likes_pct:.0f}%)\n"
-                
+                f"<b>👥 Follows:</b> {db_stats.get('follow_count', 0)}/{config.RATE_LIMITS['follows_per_day']} ({follows_pct:.0f}%)\n"
+                f"<b>👍 Likes:</b> {db_stats.get('like_count', 0)}/{config.RATE_LIMITS['likes_per_day']} ({likes_pct:.0f}%)\n"
                 f"<b>💬 Comments:</b> {db_stats.get('comment_count', 0)}/{config.RATE_LIMITS['comments_per_day']}\n"
-                f"<b>👁️ Story Views:</b> {db_stats.get('story_view_count', 0)}/{config.RATE_LIMITS['story_views_per_day']}\n"
-                f"<b>🚫 Unfollows:</b> {db_stats.get('unfollows', 0)}/{config.RATE_LIMITS['unfollows_per_day']}\n\n"
-                
-                f"<b>⏱️ Action Delay:</b> {config.MIN_ACTION_DELAY}-{config.MAX_ACTION_DELAY}s\n"
-                f"<b>🔄 Active Follows:</b> {db_stats.get('active_follows', 0)}"
+                f"<b>👁️ Stories:</b> {db_stats.get('story_view_count', 0)}/{config.RATE_LIMITS['story_views_per_day']}\n"
+                f"<b>🚫 Unfollows:</b> {db_stats.get('unfollows', 0)}/{config.RATE_LIMITS['unfollows_per_day']}"
             )
             
             await update.message.reply_text(text, parse_mode='HTML')
@@ -558,23 +617,21 @@ class TelegramBot:
             await update.message.reply_text(f"❌ Error: {str(e)}")
 
     async def cmd_start_scheduler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /start_scheduler command with task selection."""
+        """Handle /start_scheduler."""
         if not self._check_admin(update.effective_user.id):
             return
         
         if not self.insta_client or not self.insta_client.is_logged_in:
-            await update.message.reply_text("❌ Please login first with /login")
+            await update.message.reply_text("❌ Please /login first")
             return
         
         if not self.scheduler:
-            await update.message.reply_text("❌ Scheduler not initialized. Please /login first.")
+            await update.message.reply_text("❌ Scheduler not initialized")
             return
         
-        # Start scheduler if not running
         if not self.scheduler.running:
             self.scheduler.start()
         
-        # Initialize modules if not done
         if not self.modules:
             self.modules = {
                 'follow': FollowFollowersOfFollowers(self.insta_client, self.scheduler),
@@ -583,7 +640,6 @@ class TelegramBot:
                 'unfollow': UnfollowAfterDelay(self.insta_client, self.scheduler)
             }
         
-        # Show task selection keyboard
         keyboard = [
             [InlineKeyboardButton("👥 Follow Followers", callback_data="task_follow")],
             [InlineKeyboardButton("📸 View Stories", callback_data="task_stories")],
@@ -594,18 +650,13 @@ class TelegramBot:
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await update.message.reply_text(
-            "⚙️ <b>Select tasks to run:</b>\n\n"
-            "👥 Follow: Auto-follow followers of your followers\n"
-            "📸 Stories: View stories from your followers\n"
-            "👍 Comment: Like and comment with emojis\n"
-            "🚫 Unfollow: Unfollow old follows (7+ days)\n"
-            "▶️ All: Run all automation tasks\n",
+            "⚙️ <b>Select tasks:</b>",
             reply_markup=reply_markup,
             parse_mode='HTML'
         )
 
     async def cmd_stop_scheduler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /stop_scheduler command."""
+        """Handle /stop_scheduler."""
         if not self._check_admin(update.effective_user.id):
             return
         
@@ -613,73 +664,70 @@ class TelegramBot:
             self.scheduler.stop()
             await update.message.reply_text("⏹️ Scheduler stopped")
         else:
-            await update.message.reply_text("❌ Scheduler not initialized")
+            await update.message.reply_text("❌ Not initialized")
 
     async def cmd_pause(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /pause command."""
+        """Handle /pause."""
         if not self._check_admin(update.effective_user.id):
             return
         
         if self.scheduler:
             self.scheduler.pause()
-            await update.message.reply_text("⏸️ Tasks paused")
+            await update.message.reply_text("⏸️ Paused")
         else:
-            await update.message.reply_text("❌ Scheduler not initialized")
+            await update.message.reply_text("❌ Not initialized")
 
     async def cmd_resume(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /resume command."""
+        """Handle /resume."""
         if not self._check_admin(update.effective_user.id):
             return
         
         if self.scheduler:
             self.scheduler.resume()
-            await update.message.reply_text("▶️ Tasks resumed")
+            await update.message.reply_text("▶️ Resumed")
         else:
-            await update.message.reply_text("❌ Scheduler not initialized")
+            await update.message.reply_text("❌ Not initialized")
 
     async def cmd_limits(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /limits command."""
+        """Handle /limits."""
         if not self._check_admin(update.effective_user.id):
             return
         
         limits = config.RATE_LIMITS
         text = (
-            "<b>⚠️ Current Rate Limits</b>\n\n"
+            "<b>⚠️ Rate Limits</b>\n\n"
             f"<b>Follows:</b> {limits['follows_per_day']}/day, {limits['follows_per_hour']}/hour\n"
             f"<b>Likes:</b> {limits['likes_per_day']}/day, {limits['likes_per_hour']}/hour\n"
-            f"<b>Comments:</b> {limits['comments_per_day']}/day, {limits['comments_per_hour']}/hour\n"
-            f"<b>Story Views:</b> {limits['story_views_per_day']}/day, {limits['story_views_per_hour']}/hour\n"
+            f"<b>Comments:</b> {limits['comments_per_day']}/day\n"
+            f"<b>Stories:</b> {limits['story_views_per_day']}/day\n"
             f"<b>Unfollows:</b> {limits['unfollows_per_day']}/day\n\n"
-            f"<b>Unfollow After:</b> {config.UNFOLLOW_AFTER_DAYS} days\n\n"
-            f"<b>Action Delay:</b> {config.MIN_ACTION_DELAY}-{config.MAX_ACTION_DELAY} seconds\n\n"
-            "<i>Edit .env file to change limits</i>"
+            f"<b>Delay:</b> {config.MIN_ACTION_DELAY}-{config.MAX_ACTION_DELAY}s\n"
+            f"<b>Unfollow after:</b> {config.UNFOLLOW_AFTER_DAYS} days"
         )
         
         await update.message.reply_text(text, parse_mode='HTML')
 
     async def cmd_logs(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /logs command."""
+        """Handle /logs."""
         if not self._check_admin(update.effective_user.id):
             return
         
         try:
-            # Read last 50 lines of log file
             with open(config.LOG_FILE, 'r') as f:
                 lines = f.readlines()
                 last_lines = lines[-50:] if len(lines) > 50 else lines
                 log_text = ''.join(last_lines)
             
-            # Truncate if too long
             if len(log_text) > 4000:
                 log_text = "..." + log_text[-4000:]
             
             await update.message.reply_text(f"<pre>{log_text}</pre>", parse_mode='HTML')
             
         except Exception as e:
-            await update.message.reply_text(f"❌ Error reading logs: {str(e)}")
+            await update.message.reply_text(f"❌ Error: {str(e)}")
 
     async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle callback queries from inline keyboards."""
+        """Handle callback queries."""
         query = update.callback_query
         await query.answer()
         
@@ -688,26 +736,152 @@ class TelegramBot:
         
         data = query.data
         
-        if data == "task_follow":
+        # Menu callbacks
+        if data == "menu_login":
+            keyboard = [
+                [InlineKeyboardButton("🔑 Login", callback_data="action_login")],
+                [InlineKeyboardButton("⬅️ Back to Menu", callback_data="back_menu")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(
+                "🔑 <b>Login</b>\n\nUse /login command to authenticate",
+                reply_markup=reply_markup,
+                parse_mode='HTML'
+            )
+        
+        elif data == "menu_stats":
+            keyboard = [
+                [InlineKeyboardButton("📊 Status", callback_data="action_status")],
+                [InlineKeyboardButton("📈 Stats", callback_data="action_stats")],
+                [InlineKeyboardButton("📅 Report", callback_data="action_report")],
+                [InlineKeyboardButton("⬅️ Back", callback_data="back_menu")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(
+                "📊 <b>Statistics</b>",
+                reply_markup=reply_markup,
+                parse_mode='HTML'
+            )
+        
+        elif data == "menu_automation":
+            keyboard = [
+                [InlineKeyboardButton("▶️ Start", callback_data="action_start_scheduler")],
+                [InlineKeyboardButton("⏹️ Stop", callback_data="action_stop_scheduler")],
+                [InlineKeyboardButton("⏸️ Pause", callback_data="action_pause")],
+                [InlineKeyboardButton("▶️ Resume", callback_data="action_resume")],
+                [InlineKeyboardButton("⬅️ Back", callback_data="back_menu")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(
+                "⚙️ <b>Automation</b>",
+                reply_markup=reply_markup,
+                parse_mode='HTML'
+            )
+        
+        elif data == "menu_manual":
+            await query.edit_message_text(
+                "👤 <b>Manual Actions</b>\n\n"
+                "Use commands:\n"
+                "/follow &lt;username&gt;\n"
+                "/unfollow &lt;username&gt;\n"
+                "/like &lt;post_url&gt;",
+                parse_mode='HTML'
+            )
+        
+        elif data == "menu_import":
+            keyboard = [
+                [InlineKeyboardButton("📎 Import Followers", callback_data="action_import")],
+                [InlineKeyboardButton("⬅️ Back", callback_data="back_menu")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(
+                "📎 <b>Manual Import</b>\n\n"
+                "Import followers from Instagram GraphQL",
+                reply_markup=reply_markup,
+                parse_mode='HTML'
+            )
+        
+        elif data == "menu_info":
+            keyboard = [
+                [InlineKeyboardButton("⚠️ Limits", callback_data="action_limits")],
+                [InlineKeyboardButton("📜 Logs", callback_data="action_logs")],
+                [InlineKeyboardButton("❓Help", callback_data="action_help")],
+                [InlineKeyboardButton("⬅️ Back", callback_data="back_menu")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(
+                "ℹ️ <b>Info & Settings</b>",
+                reply_markup=reply_markup,
+                parse_mode='HTML'
+            )
+        
+        elif data == "back_menu":
+            keyboard = [
+                [InlineKeyboardButton("🔑 Login", callback_data="menu_login")],
+                [InlineKeyboardButton("📊 Stats", callback_data="menu_stats")],
+                [InlineKeyboardButton("⚙️ Automation", callback_data="menu_automation")],
+                [InlineKeyboardButton("👤 Manual", callback_data="menu_manual")],
+                [InlineKeyboardButton("📎 Import", callback_data="menu_import")],
+                [InlineKeyboardButton("ℹ️ Info", callback_data="menu_info")],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(
+                "🏠 <b>Main Menu</b>",
+                reply_markup=reply_markup,
+                parse_mode='HTML'
+            )
+        
+        # Action callbacks
+        elif data == "action_import":
+            await query.message.reply_text(
+                "Use /import_followers command to start manual import"
+            )
+        
+        elif data == "get_next_page":
+            next_url = self.json_import_state.get('next_url', '')
+            if next_url:
+                await query.message.reply_text(
+                    f"<b>🔗 Next Page URL:</b>\n\n"
+                    f"<code>{next_url}</code>\n\n"
+                    "Copy URL, get JSON, and send it here",
+                    parse_mode='HTML'
+                )
+        
+        elif data == "finish_import":
+            total = self.json_import_state.get('total_imported', 0)
+            pages = self.json_import_state.get('pages', 0)
+            
+            await query.message.reply_text(
+                f"✅ <b>Import Finished!</b>\n\n"
+                f"📊 Total: {total} followers\n"
+                f"📄 Pages: {pages}",
+                parse_mode='HTML'
+            )
+            
+            self.awaiting_json_import = False
+            self.json_import_state = {}
+        
+        # Task callbacks
+        elif data == "task_follow":
             await query.edit_message_text("▶️ Starting follow module...")
             self.modules['follow'].run()
             await query.message.reply_text("✅ Follow module started")
-            
+        
         elif data == "task_stories":
-            await query.edit_message_text("▶️ Starting story viewing module...")
+            await query.edit_message_text("▶️ Starting stories module...")
             self.modules['stories'].run()
-            await query.message.reply_text("✅ Story module started")
-            
+            await query.message.reply_text("✅ Stories module started")
+        
         elif data == "task_comment":
             await query.edit_message_text("▶️ Starting comment module...")
             self.modules['comment'].run()
             await query.message.reply_text("✅ Comment module started")
-            
+        
         elif data == "task_unfollow":
             await query.edit_message_text("▶️ Starting unfollow module...")
             self.modules['unfollow'].run()
             await query.message.reply_text("✅ Unfollow module started")
-            
+        
         elif data == "task_all":
             await query.edit_message_text("▶️ Starting all modules...")
             self.modules['follow'].run()
@@ -717,21 +891,23 @@ class TelegramBot:
             await query.message.reply_text("✅ All modules started")
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle text messages (for 2FA code or unknown text)."""
+        """Handle text messages."""
         if not self._check_admin(update.effective_user.id):
             return
         
+        text = update.message.text
+        
+        # Check for 2FA
         if self.awaiting_2fa:
-            code = update.message.text.strip()
+            code = text.strip()
             
             if self.insta_client:
                 success = self.insta_client.verify_2fa(code)
                 
                 if success:
                     self.awaiting_2fa = False
-                    await update.message.reply_text("✅ 2FA verification successful!")
+                    await update.message.reply_text("✅ 2FA successful!")
                     
-                    # Initialize modules
                     self.modules = {
                         'follow': FollowFollowersOfFollowers(self.insta_client, self.scheduler),
                         'stories': LikeStoriesOfFollowers(self.insta_client, self.scheduler),
@@ -739,12 +915,22 @@ class TelegramBot:
                         'unfollow': UnfollowAfterDelay(self.insta_client, self.scheduler)
                     }
                 else:
-                    await update.message.reply_text("❌ Invalid code. Please try again.")
+                    await update.message.reply_text("❌ Invalid code")
+        
+        # Check for JSON import
+        elif self.awaiting_json_import:
+            # Try to parse as JSON
+            try:
+                await self._import_followers_json(update, text)
+            except:
+                await update.message.reply_text(
+                    "❌ Invalid JSON. Send file or paste valid JSON."
+                )
+        
         else:
-            # Unknown text message - show help
             text = (
-                "ℹ️ <b>I don't understand that message.</b>\n\n"
-                "📚 Use /help to see all available commands."
+                "ℹ️ <b>I don't understand.</b>\n\n"
+                "📚 Use /menu or /help"
             )
             await update.message.reply_text(text, parse_mode='HTML')
 
