@@ -167,8 +167,8 @@ class TelegramBot:
             "<i>Example: /like https://instagram.com/p/ABC123/</i>\n\n"
             
             "<b>⚙️ 3. Automation (Scheduler)</b>\n"
-            "/start_scheduler - Start automated tasks\n"
-            "<i>Runs follow, story view, and unfollow modules</i>\n\n"
+            "/start_scheduler - Select tasks to run\n"
+            "<i>Choose: Follow, Stories, Comment, Unfollow, or All</i>\n\n"
             
             "/stop_scheduler - Stop all automation\n"
             "/pause - Pause tasks temporarily\n"
@@ -558,7 +558,7 @@ class TelegramBot:
             await update.message.reply_text(f"❌ Error: {str(e)}")
 
     async def cmd_start_scheduler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /start_scheduler command."""
+        """Handle /start_scheduler command with task selection."""
         if not self._check_admin(update.effective_user.id):
             return
         
@@ -567,14 +567,12 @@ class TelegramBot:
             return
         
         if not self.scheduler:
-            await update.message.reply_text("❌ Scheduler not initialized")
+            await update.message.reply_text("❌ Scheduler not initialized. Please /login first.")
             return
         
-        if self.scheduler.running:
-            await update.message.reply_text("⚠️ Scheduler already running")
-            return
-        
-        self.scheduler.start()
+        # Start scheduler if not running
+        if not self.scheduler.running:
+            self.scheduler.start()
         
         # Initialize modules if not done
         if not self.modules:
@@ -585,12 +583,26 @@ class TelegramBot:
                 'unfollow': UnfollowAfterDelay(self.insta_client, self.scheduler)
             }
         
-        # Start all modules
-        self.modules['follow'].run()
-        self.modules['stories'].run()
-        self.modules['unfollow'].run()
+        # Show task selection keyboard
+        keyboard = [
+            [InlineKeyboardButton("👥 Follow Followers", callback_data="task_follow")],
+            [InlineKeyboardButton("📸 View Stories", callback_data="task_stories")],
+            [InlineKeyboardButton("👍 Like & Comment", callback_data="task_comment")],
+            [InlineKeyboardButton("🚫 Unfollow Old", callback_data="task_unfollow")],
+            [InlineKeyboardButton("▶️ All Tasks", callback_data="task_all")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await update.message.reply_text("✅ Scheduler started! Automation is now running.")
+        await update.message.reply_text(
+            "⚙️ <b>Select tasks to run:</b>\n\n"
+            "👥 Follow: Auto-follow followers of your followers\n"
+            "📸 Stories: View stories from your followers\n"
+            "👍 Comment: Like and comment with emojis\n"
+            "🚫 Unfollow: Unfollow old follows (7+ days)\n"
+            "▶️ All: Run all automation tasks\n",
+            reply_markup=reply_markup,
+            parse_mode='HTML'
+        )
 
     async def cmd_stop_scheduler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /stop_scheduler command."""
@@ -674,8 +686,35 @@ class TelegramBot:
         if not self._check_admin(query.from_user.id):
             return
         
-        # Handle callbacks if needed
-        pass
+        data = query.data
+        
+        if data == "task_follow":
+            await query.edit_message_text("▶️ Starting follow module...")
+            self.modules['follow'].run()
+            await query.message.reply_text("✅ Follow module started")
+            
+        elif data == "task_stories":
+            await query.edit_message_text("▶️ Starting story viewing module...")
+            self.modules['stories'].run()
+            await query.message.reply_text("✅ Story module started")
+            
+        elif data == "task_comment":
+            await query.edit_message_text("▶️ Starting comment module...")
+            self.modules['comment'].run()
+            await query.message.reply_text("✅ Comment module started")
+            
+        elif data == "task_unfollow":
+            await query.edit_message_text("▶️ Starting unfollow module...")
+            self.modules['unfollow'].run()
+            await query.message.reply_text("✅ Unfollow module started")
+            
+        elif data == "task_all":
+            await query.edit_message_text("▶️ Starting all modules...")
+            self.modules['follow'].run()
+            self.modules['stories'].run()
+            self.modules['comment'].run()
+            self.modules['unfollow'].run()
+            await query.message.reply_text("✅ All modules started")
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle text messages (for 2FA code or unknown text)."""
