@@ -55,7 +55,8 @@ cd instagram-telegram-bot
 bash setup.sh
 
 # 3. Login to Instagram (supports 2FA)
-bash scripts/login.sh
+source venv/bin/activate
+python3 scripts/login.py
 
 # 4. Start the bot
 bash scripts/run.sh
