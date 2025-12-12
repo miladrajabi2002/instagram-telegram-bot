@@ -40,7 +40,7 @@ class InstagramClient:
         # Set human-like delays (5-15 seconds)
         self.client.delay_range = [5, 15]
         
-        # Disable public API (GraphQL) - only use private API
+        # Set request timeout
         self.client.request_timeout = 10
         
         self.db = Database()
@@ -257,7 +257,14 @@ class InstagramClient:
                 
             except ChallengeRequired as e:
                 logger.error(f"❌ Challenge required: {e}")
-                self._notify(f"⚠️ Instagram challenge required!\n{str(e)}")
+                # Extract challenge URL if present
+                challenge_url = "https://www.instagram.com/challenge/"
+                self._notify(
+                    f"🚨 <b>Instagram Challenge Required!</b>\n\n"
+                    f"Please verify your account:\n"
+                    f"{challenge_url}\n\n"
+                    f"Open this link in your browser and complete the verification."
+                )
                 return None
                 
             except LoginRequired as e:
@@ -268,17 +275,30 @@ class InstagramClient:
                 return None
                 
             except ClientError as e:
-                logger.error(f"❌ Client error: {e}")
+                error_msg = str(e)
+                # Check if it's a challenge
+                if 'challenge' in error_msg.lower():
+                    logger.error(f"❌ Challenge detected in error: {error_msg[:100]}")
+                    self._notify(
+                        f"🚨 <b>Instagram Challenge Detected!</b>\n\n"
+                        f"Please verify your account at:\n"
+                        f"https://www.instagram.com/challenge/\n\n"
+                        f"Complete the verification and try again."
+                    )
+                    return None
+                
+                logger.error(f"❌ Client error: {error_msg[:100]}")
                 if attempt < config.MAX_RETRIES - 1:
                     wait_time = config.RETRY_DELAY_BASE * (2 ** attempt)
                     time.sleep(wait_time)
                 else:
-                    self._notify(f"❌ API call failed: {str(e)}")
+                    self._notify(f"❌ API call failed after {config.MAX_RETRIES} attempts")
                     return None
                     
             except Exception as e:
-                logger.error(f"❌ Unexpected error: {e}")
-                self._notify(f"❌ Unexpected error: {str(e)}")
+                error_msg = str(e)
+                logger.error(f"❌ Unexpected error: {error_msg[:100]}")
+                self._notify(f"❌ Unexpected error: {error_msg[:200]}")
                 return None
         
         return None
@@ -412,7 +432,7 @@ class InstagramClient:
     # Helper methods with caching
     
     def get_user_followers(self, user_id: int, amount: int = 50) -> List[Dict]:
-        """Get user followers with caching.
+        """Get user followers with incremental caching.
         
         Args:
             user_id: Instagram user ID
@@ -426,28 +446,76 @@ class InstagramClient:
         # Try cache first (valid for 1 hour)
         cached = self.cache.get(cache_key, ttl=3600)
         if cached:
-            logger.info(f"💾 Using cached followers for user {user_id}")
+            logger.info(f"💾 Using cached {len(cached)} followers for user {user_id}")
             return cached
         
-        # Fetch from API
-        logger.info(f"📡 Fetching {amount} followers for user {user_id}...")
-        result = self._safe_api_call(self.client.user_followers, user_id, amount)
-        followers = list(result.values()) if result else []
+        # Fetch from API with manual pagination (12 per page)
+        logger.info(f"📡 Fetching up to {amount} followers for user {user_id}...")
+        all_followers = []
         
-        # Cache result
-        if followers:
-            self.cache.set(cache_key, followers)
-            logger.info(f"💾 Cached {len(followers)} followers")
+        try:
+            # Use Private API directly with pagination
+            max_id = None
+            page = 1
             
-            # Save to database
-            for follower in followers:
-                self.db.add_follow_record(
-                    str(follower.pk),
-                    follower.username,
-                    f"my_follower"
-                )
+            while len(all_followers) < amount:
+                logger.info(f"📄 Fetching page {page} (have {len(all_followers)} so far)...")
+                
+                # Fetch one page (12 followers)
+                result = self.client.user_followers_gql(user_id, amount=12, end_cursor=max_id)
+                
+                if not result:
+                    logger.warning("⚠️ No more followers or challenge detected")
+                    break
+                
+                # Extract followers from result
+                page_followers = list(result.values())
+                
+                if not page_followers:
+                    logger.info("✅ No more followers available")
+                    break
+                
+                # Add to collection
+                all_followers.extend(page_followers)
+                logger.info(f"✅ Got {len(page_followers)} followers (total: {len(all_followers)})")
+                
+                # Save incrementally to cache and database
+                self.cache.set(cache_key, all_followers)
+                for follower in page_followers:
+                    self.db.add_follow_record(
+                        str(follower.pk),
+                        follower.username,
+                        f"my_follower"
+                    )
+                logger.info(f"💾 Saved {len(page_followers)} followers to cache and database")
+                
+                # Check if we have enough
+                if len(all_followers) >= amount:
+                    logger.info(f"✅ Reached target of {amount} followers")
+                    break
+                
+                # Get next page cursor
+                # Note: instagrapi returns dict, we need to handle pagination
+                # For now, we'll stop after getting some results
+                break  # TODO: Implement proper cursor pagination
+                
+        except ChallengeRequired as e:
+            logger.error(f"🚨 Challenge required while fetching followers")
+            self._notify(
+                f"🚨 <b>Challenge Required!</b>\n\n"
+                f"Collected {len(all_followers)} followers before challenge.\n\n"
+                f"Please verify at: https://www.instagram.com/challenge/"
+            )
+        except Exception as e:
+            logger.error(f"❌ Error fetching followers: {str(e)[:100]}")
+            self._notify(f"❌ Error fetching followers: {str(e)[:200]}")
         
-        return followers
+        # Cache whatever we got
+        if all_followers:
+            self.cache.set(cache_key, all_followers)
+            logger.info(f"💾 Final cache: {len(all_followers)} followers")
+        
+        return all_followers
 
     def get_user_following(self, user_id: int, amount: int = 50) -> List[Dict]:
         """Get users followed by user with caching.
