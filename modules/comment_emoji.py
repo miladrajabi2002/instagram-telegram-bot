@@ -1,21 +1,34 @@
-"""Module to comment emojis on posts."""
-import random
+"""Module to like and comment on followers' posts."""
 import logging
+import random
 from typing import List
 
-from core.insta_client import InstagramClient
-from core.scheduler import TaskScheduler, TaskPriority
-from includes.database import Database
-from includes.logger import setup_logger
 import config
+from includes.logger import setup_logger
 
 logger = setup_logger(__name__)
 
+# Emoji comments
+EMOJI_COMMENTS = [
+    "❤️",
+    "🔥",
+    "😍",
+    "👏",
+    "✨",
+    "💯",
+    "👍",
+    "🙌",
+    "❤️🔥",
+    "✨✨",
+    "🔥🔥",
+    "😍😍",
+]
+
 
 class CommentEmoji:
-    """Leave emoji comments on posts."""
+    """Like and comment on followers' posts."""
 
-    def __init__(self, insta_client: InstagramClient, scheduler: TaskScheduler):
+    def __init__(self, insta_client, scheduler):
         """Initialize module.
         
         Args:
@@ -24,105 +37,92 @@ class CommentEmoji:
         """
         self.client = insta_client
         self.scheduler = scheduler
-        self.db = Database()
+        self.module_name = "comment_emoji"
 
-    def run(self, num_followers: int = 20, posts_per_user: int = 1, max_comments: int = 15):
-        """Comment on followers' posts.
+    def run(self):
+        """Schedule the like and comment task."""
+        logger.info("Starting comment emoji module")
         
-        Args:
-            num_followers: Number of followers to check
-            posts_per_user: Number of posts per user to comment on
-            max_comments: Maximum total comments
-        """
-        try:
-            logger.info("Starting emoji comment module")
-            
-            my_user_id = self.client.get_my_user_id()
-            if not my_user_id:
-                logger.error("Could not get user ID")
-                return
-            
-            # Get followers
-            logger.info(f"Fetching {num_followers} followers...")
-            followers = self.client.get_user_followers(my_user_id, num_followers)
-            
-            if not followers:
-                logger.warning("No followers found")
-                return
-            
-            # Randomize
-            random.shuffle(followers)
-            
-            tasks = []
-            comment_count = 0
-            
-            for follower in followers:
-                if comment_count >= max_comments:
-                    break
-                
-                follower_id = follower.pk
-                follower_username = follower.username
-                
+        # Schedule task
+        task = {
+            'type': 'comment',
+            'function': self._execute,
+            'interval': config.TASK_INTERVALS.get('comment', 3600)  # 1 hour
+        }
+        
+        self.scheduler.add_task(task)
+        logger.info("Comment task scheduled")
+
+    def _execute(self):
+        """Execute the like and comment logic."""
+        logger.info("Executing comment emoji task")
+        
+        # Get followers from DATABASE (not API!)
+        logger.info("💾 Getting followers from database...")
+        followers = self.client.get_followers_from_db(limit=15)
+        
+        if not followers:
+            logger.warning("⚠️ No followers in database")
+            return
+        
+        logger.info(f"Got {len(followers)} followers from database")
+        
+        # Randomly select some followers
+        num_to_interact = min(8, len(followers))
+        selected_followers = random.sample(followers, num_to_interact)
+        
+        logger.info(f"Selected {num_to_interact} followers to interact with")
+        
+        likes_count = 0
+        comments_count = 0
+        
+        for follower in selected_followers:
+            try:
                 # Get recent posts
-                medias = self.client.get_user_medias(follower_id, posts_per_user * 2)
+                medias = self.client.get_user_medias(follower.pk, amount=3)
                 
                 if not medias:
+                    logger.debug(f"No posts for {follower.username}")
                     continue
                 
-                # Select posts to comment on
-                posts_to_comment = random.sample(medias, min(len(medias), posts_per_user))
+                logger.info(f"📸 User {follower.username} has {len(medias)} recent posts")
                 
-                for media in posts_to_comment:
-                    if comment_count >= max_comments:
-                        break
-                    
-                    # Select random emoji
-                    emoji = random.choice(config.EMOJI_COMMENTS)
-                    
-                    # Occasionally use multiple emojis
-                    if random.random() < 0.3:  # 30% chance
-                        emoji += random.choice(config.EMOJI_COMMENTS)
-                    
-                    tasks.append({
-                        'func': self._comment_on_post,
-                        'task_type': 'comment',
-                        'priority': TaskPriority.NORMAL,
-                        'args': (media.pk, emoji, follower_username)
-                    })
-                    
-                    comment_count += 1
-            
-            if tasks:
-                # Schedule with longer delays
-                self.scheduler.schedule_batch(
-                    tasks,
-                    randomize_order=True,
-                    spread_over_minutes=90  # Spread over 90 minutes
-                )
-                logger.info(f"Scheduled {len(tasks)} comment tasks")
-            else:
-                logger.info("No posts found to comment on")
+                # Like and optionally comment on first post
+                media = medias[0]
                 
-        except Exception as e:
-            logger.error(f"Comment module error: {e}", exc_info=True)
-
-    def _comment_on_post(self, media_id: str, text: str, username: str):
-        """Comment on a post.
+                # Like post
+                if self.client.safe_like(media.pk):
+                    likes_count += 1
+                    logger.info(f"✅ Liked post from {follower.username}")
+                    
+                    self.client.db.log_action(
+                        'like',
+                        str(media.pk),
+                        True,
+                        f"Liked post from {follower.username}"
+                    )
+                    
+                    # 30% chance to comment emoji
+                    if random.random() < 0.3:
+                        emoji = random.choice(EMOJI_COMMENTS)
+                        
+                        if self.client.safe_comment(media.pk, emoji):
+                            comments_count += 1
+                            logger.info(f"✅ Commented '{emoji}' on {follower.username}'s post")
+                            
+                            self.client.db.log_action(
+                                'comment',
+                                str(media.pk),
+                                True,
+                                f"Commented on {follower.username}'s post"
+                            )
+                        else:
+                            logger.warning(f"Failed to comment on {follower.username}'s post")
+                else:
+                    logger.warning(f"Failed to like {follower.username}'s post")
+                    
+            except Exception as e:
+                logger.error(f"Error processing posts for {follower.username}: {e}")
+                continue
         
-        Args:
-            media_id: Media ID
-            text: Comment text
-            username: Post owner username
-        """
-        try:
-            success = self.client.safe_comment(media_id, text)
-            
-            if success:
-                self.db.log_action('comment', media_id, True, f"Commented '{text}' on @{username}'s post")
-                logger.info(f"Commented on @{username}'s post")
-            else:
-                self.db.log_action('comment', media_id, False, f"Failed to comment on @{username}'s post")
-                
-        except Exception as e:
-            logger.error(f"Error commenting on post {media_id}: {e}")
-            self.db.log_action('comment', media_id, False, str(e))
+        logger.info(f"✅ Like/Comment complete. Liked: {likes_count}, Commented: {comments_count}")

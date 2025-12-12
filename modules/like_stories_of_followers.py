@@ -1,20 +1,18 @@
 """Module to view and like stories of followers."""
-import random
 import logging
+import random
 from typing import List
 
-from core.insta_client import InstagramClient
-from core.scheduler import TaskScheduler, TaskPriority
-from includes.database import Database
+import config
 from includes.logger import setup_logger
 
 logger = setup_logger(__name__)
 
 
 class LikeStoriesOfFollowers:
-    """View and interact with stories of followers."""
+    """View and like stories of your followers."""
 
-    def __init__(self, insta_client: InstagramClient, scheduler: TaskScheduler):
+    def __init__(self, insta_client, scheduler):
         """Initialize module.
         
         Args:
@@ -23,99 +21,77 @@ class LikeStoriesOfFollowers:
         """
         self.client = insta_client
         self.scheduler = scheduler
-        self.db = Database()
+        self.module_name = "like_stories"
 
-    def run(self, num_followers: int = 30, max_stories: int = 50):
-        """View stories of followers.
+    def run(self):
+        """Schedule the story viewing task."""
+        logger.info("Starting like stories of followers module")
         
-        Args:
-            num_followers: Number of followers to check
-            max_stories: Maximum stories to view
-        """
-        try:
-            logger.info("Starting like stories of followers module")
-            
-            my_user_id = self.client.get_my_user_id()
-            if not my_user_id:
-                logger.error("Could not get user ID")
-                return
-            
-            # Get followers
-            logger.info(f"Fetching {num_followers} followers...")
-            followers = self.client.get_user_followers(my_user_id, num_followers)
-            
-            if not followers:
-                logger.warning("No followers found")
-                return
-            
-            # Randomize order
-            random.shuffle(followers)
-            
-            tasks = []
-            story_count = 0
-            
-            for follower in followers:
-                if story_count >= max_stories:
-                    break
-                
-                follower_id = follower.pk
-                follower_username = follower.username
-                
-                # Get user stories
-                stories = self.client.get_user_stories(follower_id)
-                
-                if not stories:
-                    continue
-                
-                logger.info(f"Found {len(stories)} stories from @{follower_username}")
-                
-                # View random subset of stories
-                num_to_view = min(len(stories), random.randint(1, 3))
-                stories_to_view = random.sample(stories, num_to_view)
-                
-                for story in stories_to_view:
-                    if story_count >= max_stories:
-                        break
-                    
-                    tasks.append({
-                        'func': self._view_story,
-                        'task_type': 'story_view',
-                        'priority': TaskPriority.LOW,
-                        'args': (story.pk, follower_username)
-                    })
-                    
-                    story_count += 1
-            
-            if tasks:
-                # Schedule with randomization
-                self.scheduler.schedule_batch(
-                    tasks,
-                    randomize_order=True,
-                    spread_over_minutes=30  # Spread over 30 minutes
-                )
-                logger.info(f"Scheduled {len(tasks)} story view tasks")
-            else:
-                logger.info("No stories found")
-                
-        except Exception as e:
-            logger.error(f"Story viewing module error: {e}", exc_info=True)
+        # Schedule task
+        task = {
+            'type': 'like_stories',
+            'function': self._execute,
+            'interval': config.TASK_INTERVALS.get('like_stories', 7200)  # 2 hours
+        }
+        
+        self.scheduler.add_task(task)
+        logger.info("Like stories task scheduled")
 
-    def _view_story(self, story_id: str, username: str):
-        """View a story.
+    def _execute(self):
+        """Execute the story viewing logic."""
+        logger.info("Executing like stories task")
         
-        Args:
-            story_id: Story ID
-            username: Story owner username
-        """
-        try:
-            success = self.client.safe_view_story(story_id)
-            
-            if success:
-                self.db.log_action('story_view', story_id, True, f"Viewed story from @{username}")
-                logger.debug(f"Viewed story from @{username}")
-            else:
-                self.db.log_action('story_view', story_id, False, f"Failed to view story from @{username}")
+        # Get followers from DATABASE (not API!)
+        logger.info("💾 Getting followers from database...")
+        followers = self.client.get_followers_from_db(limit=20)
+        
+        if not followers:
+            logger.warning("⚠️ No followers in database")
+            return
+        
+        logger.info(f"Got {len(followers)} followers from database")
+        
+        # Randomly select some followers
+        num_to_check = min(10, len(followers))
+        selected_followers = random.sample(followers, num_to_check)
+        
+        logger.info(f"Selected {num_to_check} followers to check stories")
+        
+        stories_viewed = 0
+        
+        for follower in selected_followers:
+            try:
+                # Get stories
+                stories = self.client.get_user_stories(follower.pk)
                 
-        except Exception as e:
-            logger.error(f"Error viewing story {story_id}: {e}")
-            self.db.log_action('story_view', story_id, False, str(e))
+                if stories:
+                    logger.info(f"📖 User {follower.username} has {len(stories)} stories")
+                    
+                    # View some stories (not all)
+                    num_to_view = min(3, len(stories))
+                    
+                    for story in stories[:num_to_view]:
+                        success = self.client.safe_view_story(story.pk)
+                        
+                        if success:
+                            stories_viewed += 1
+                            logger.info(f"✅ Viewed story from {follower.username}")
+                            
+                            # Log to database
+                            self.client.db.log_action(
+                                'story_view',
+                                str(follower.pk),
+                                True,
+                                f"Viewed story from {follower.username}"
+                            )
+                        else:
+                            logger.warning(f"Failed to view story from {follower.username}")
+                            break
+                else:
+                    logger.debug(f"No stories for {follower.username}")
+                    
+            except Exception as e:
+                logger.error(f"Error processing stories for {follower.username}: {e}")
+                continue
+        
+        logger.info(f"✅ Story viewing complete. Viewed {stories_viewed} stories")
