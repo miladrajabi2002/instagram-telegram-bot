@@ -14,6 +14,7 @@ from instagrapi.exceptions import (
 
 import config
 from includes.database import Database
+from includes.cache import Cache
 from includes.security import encrypt_data, decrypt_data
 from includes.logger import setup_logger
 
@@ -40,6 +41,7 @@ class InstagramClient:
         self.client.delay_range = [5, 15]
         
         self.db = Database()
+        self.cache = Cache()
         self.session_file = config.SESSION_DIR / f"{username}_session.json"
         self.is_logged_in = False
         
@@ -57,32 +59,32 @@ class InstagramClient:
         try:
             # Try to load existing session
             if self._load_session():
-                logger.info(f"Loaded session for {self.username}")
+                logger.info(f"✅ Loaded session for {self.username}")
                 self.is_logged_in = True
                 return True
             
             # New login
-            logger.info(f"Attempting login for {self.username}")
+            logger.info(f"🔐 Attempting login for {self.username}")
             self.client.login(self.username, self.password)
             self._save_session()
             self.is_logged_in = True
             
             self._notify(f"✅ Successfully logged in to Instagram as {self.username}")
-            logger.info(f"Successfully logged in as {self.username}")
+            logger.info(f"✅ Successfully logged in as {self.username}")
             return True
             
         except TwoFactorRequired:
-            logger.warning("2FA required")
+            logger.warning("⚠️ 2FA required")
             self._notify("⚠️ 2FA required! Please provide the code via Telegram.")
             return False
             
         except ChallengeRequired as e:
-            logger.warning(f"Challenge required: {e}")
+            logger.warning(f"⚠️ Challenge required: {e}")
             self._notify(f"⚠️ Instagram challenge required!\n{str(e)}\nPlease verify via Instagram app.")
             return False
             
         except Exception as e:
-            logger.error(f"Login failed: {e}")
+            logger.error(f"❌ Login failed: {e}")
             self._notify(f"❌ Login failed: {str(e)}")
             return False
 
@@ -101,10 +103,10 @@ class InstagramClient:
             self._save_session()
             self.is_logged_in = True
             self._notify("✅ 2FA verification successful!")
-            logger.info("2FA verification successful")
+            logger.info("✅ 2FA verification successful")
             return True
         except Exception as e:
-            logger.error(f"2FA verification failed: {e}")
+            logger.error(f"❌ 2FA verification failed: {e}")
             self._notify(f"❌ 2FA verification failed: {str(e)}")
             return False
 
@@ -116,18 +118,23 @@ class InstagramClient:
         """
         try:
             if not self.session_file.exists():
+                logger.debug("❌ Session file not found")
                 return False
                 
+            logger.debug("📂 Loading session from file...")
             self.client.load_settings(self.session_file)
             self.client.login(self.username, self.password)
             
             # Verify session is valid
-            self.client.get_timeline_feed()
+            logger.debug("🔍 Verifying session...")
+            timeline = self.client.get_timeline_feed()
+            logger.debug(f"✅ Session valid - Timeline has {len(timeline)} items")
             return True
             
         except Exception as e:
-            logger.warning(f"Failed to load session: {e}")
+            logger.warning(f"⚠️ Failed to load session: {e}")
             if self.session_file.exists():
+                logger.debug("🗑️ Deleting invalid session file")
                 self.session_file.unlink()
             return False
 
@@ -135,9 +142,9 @@ class InstagramClient:
         """Save session to file."""
         try:
             self.client.dump_settings(self.session_file)
-            logger.info("Session saved successfully")
+            logger.info(f"💾 Session saved to {self.session_file}")
         except Exception as e:
-            logger.error(f"Failed to save session: {e}")
+            logger.error(f"❌ Failed to save session: {e}")
 
     def _notify(self, message: str):
         """Send Telegram notification.
@@ -164,7 +171,7 @@ class InstagramClient:
         # Random delay between min and max
         delay = random.uniform(min_delay, max_delay)
         
-        logger.debug(f"Waiting {delay:.1f} seconds...")
+        logger.debug(f"⏱️ Waiting {delay:.1f} seconds...")
         time.sleep(delay)
 
     def _check_rate_limit(self, action_type: str) -> bool:
@@ -190,7 +197,7 @@ class InstagramClient:
         hourly_limit = config.RATE_LIMITS.get(f"{action_type}s_per_hour", 999)
         
         if hourly_count >= hourly_limit:
-            logger.warning(f"Hourly rate limit reached for {action_type}: {hourly_count}/{hourly_limit}")
+            logger.warning(f"⚠️ Hourly rate limit reached for {action_type}: {hourly_count}/{hourly_limit}")
             self._notify(f"⚠️ Hourly rate limit reached for {action_type}. Pausing...")
             return False
         
@@ -199,7 +206,7 @@ class InstagramClient:
         daily_limit = config.RATE_LIMITS.get(f"{action_type}s_per_day", 9999)
         
         if daily_count >= daily_limit:
-            logger.warning(f"Daily rate limit reached for {action_type}: {daily_count}/{daily_limit}")
+            logger.warning(f"⚠️ Daily rate limit reached for {action_type}: {daily_count}/{daily_limit}")
             self._notify(f"⚠️ Daily rate limit reached for {action_type}. Stopping...")
             return False
         
@@ -227,35 +234,37 @@ class InstagramClient:
         """
         for attempt in range(config.MAX_RETRIES):
             try:
+                logger.debug(f"📡 API call: {func.__name__}")
                 result = func(*args, **kwargs)
+                logger.debug(f"✅ API call successful: {func.__name__}")
                 return result
                 
             except RateLimitError as e:
                 wait_time = config.RETRY_DELAY_BASE * (2 ** attempt)
-                logger.warning(f"Rate limit hit: {e}. Waiting {wait_time}s...")
+                logger.warning(f"⚠️ Rate limit hit: {e}. Waiting {wait_time}s...")
                 self._notify(f"⚠️ Instagram rate limit hit. Waiting {wait_time}s...")
                 time.sleep(wait_time)
                 
             except PleaseWaitFewMinutes as e:
                 wait_time = 900  # 15 minutes
-                logger.warning(f"Instagram asks to wait: {e}. Waiting {wait_time}s...")
+                logger.warning(f"⚠️ Instagram asks to wait: {e}. Waiting {wait_time}s...")
                 self._notify(f"⚠️ Instagram requests wait. Pausing for 15 minutes...")
                 time.sleep(wait_time)
                 
             except ChallengeRequired as e:
-                logger.error(f"Challenge required: {e}")
+                logger.error(f"❌ Challenge required: {e}")
                 self._notify(f"⚠️ Instagram challenge required!\n{str(e)}")
                 return None
                 
             except LoginRequired as e:
-                logger.error(f"Login required: {e}")
+                logger.error(f"❌ Login required: {e}")
                 self._notify("⚠️ Session expired. Re-logging in...")
                 if self.login():
                     continue
                 return None
                 
             except ClientError as e:
-                logger.error(f"Client error: {e}")
+                logger.error(f"❌ Client error: {e}")
                 if attempt < config.MAX_RETRIES - 1:
                     wait_time = config.RETRY_DELAY_BASE * (2 ** attempt)
                     time.sleep(wait_time)
@@ -264,7 +273,7 @@ class InstagramClient:
                     return None
                     
             except Exception as e:
-                logger.error(f"Unexpected error: {e}")
+                logger.error(f"❌ Unexpected error: {e}")
                 self._notify(f"❌ Unexpected error: {str(e)}")
                 return None
         
@@ -289,7 +298,7 @@ class InstagramClient:
         
         if result:
             self._record_action('follow')
-            logger.info(f"Followed user {user_id}")
+            logger.info(f"✅ Followed user {user_id}")
             return True
         return False
 
@@ -306,7 +315,7 @@ class InstagramClient:
         result = self._safe_api_call(self.client.user_unfollow, user_id)
         
         if result:
-            logger.info(f"Unfollowed user {user_id}")
+            logger.info(f"✅ Unfollowed user {user_id}")
             return True
         return False
 
@@ -327,7 +336,7 @@ class InstagramClient:
         
         if result:
             self._record_action('like')
-            logger.info(f"Liked media {media_id}")
+            logger.info(f"✅ Liked media {media_id}")
             return True
         return False
 
@@ -349,7 +358,7 @@ class InstagramClient:
         
         if result:
             self._record_action('comment')
-            logger.info(f"Commented on media {media_id}")
+            logger.info(f"✅ Commented on media {media_id}")
             return True
         return False
 
@@ -365,19 +374,20 @@ class InstagramClient:
         if not self._check_rate_limit('story_view'):
             return False
         
-        self._wait_random_delay(10, 60)  # Shorter delay for stories
+        # Longer delay for stories to be more human-like
+        self._wait_random_delay(15, 45)
         result = self._safe_api_call(self.client.story_seen, [story_id])
         
         if result:
             self._record_action('story_view')
-            logger.debug(f"Viewed story {story_id}")
+            logger.info(f"✅ Viewed story {story_id}")
             return True
         return False
 
-    # Helper methods
+    # Helper methods with caching
     
     def get_user_followers(self, user_id: int, amount: int = 50) -> List[Dict]:
-        """Get user followers.
+        """Get user followers with caching.
         
         Args:
             user_id: Instagram user ID
@@ -386,11 +396,36 @@ class InstagramClient:
         Returns:
             List of follower dictionaries
         """
+        cache_key = f"followers_{user_id}_{amount}"
+        
+        # Try cache first (valid for 1 hour)
+        cached = self.cache.get(cache_key, ttl=3600)
+        if cached:
+            logger.info(f"💾 Using cached followers for user {user_id}")
+            return cached
+        
+        # Fetch from API
+        logger.info(f"📡 Fetching {amount} followers for user {user_id}...")
         result = self._safe_api_call(self.client.user_followers, user_id, amount)
-        return list(result.values()) if result else []
+        followers = list(result.values()) if result else []
+        
+        # Cache result
+        if followers:
+            self.cache.set(cache_key, followers)
+            logger.info(f"💾 Cached {len(followers)} followers")
+            
+            # Save to database
+            for follower in followers:
+                self.db.add_follow_record(
+                    str(follower.pk),
+                    follower.username,
+                    f"my_follower"
+                )
+        
+        return followers
 
     def get_user_following(self, user_id: int, amount: int = 50) -> List[Dict]:
-        """Get users followed by user.
+        """Get users followed by user with caching.
         
         Args:
             user_id: Instagram user ID
@@ -399,8 +434,25 @@ class InstagramClient:
         Returns:
             List of following dictionaries
         """
+        cache_key = f"following_{user_id}_{amount}"
+        
+        # Try cache first
+        cached = self.cache.get(cache_key, ttl=3600)
+        if cached:
+            logger.info(f"💾 Using cached following for user {user_id}")
+            return cached
+        
+        # Fetch from API
+        logger.info(f"📡 Fetching {amount} following for user {user_id}...")
         result = self._safe_api_call(self.client.user_following, user_id, amount)
-        return list(result.values()) if result else []
+        following = list(result.values()) if result else []
+        
+        # Cache result
+        if following:
+            self.cache.set(cache_key, following)
+            logger.info(f"💾 Cached {len(following)} following")
+        
+        return following
 
     def get_user_medias(self, user_id: int, amount: int = 20) -> List[Any]:
         """Get user media posts.
@@ -424,7 +476,14 @@ class InstagramClient:
         Returns:
             List of story objects
         """
+        logger.info(f"📖 Fetching stories for user {user_id}...")
         result = self._safe_api_call(self.client.user_stories, user_id)
+        
+        if result:
+            logger.info(f"✅ Found {len(result)} stories")
+        else:
+            logger.info("ℹ️ No stories found")
+        
         return result if result else []
 
     def get_my_user_id(self) -> Optional[int]:
@@ -434,7 +493,9 @@ class InstagramClient:
             User ID or None
         """
         try:
-            return self.client.user_id
+            user_id = self.client.user_id
+            logger.debug(f"👤 My user ID: {user_id}")
+            return user_id
         except:
             return None
 
