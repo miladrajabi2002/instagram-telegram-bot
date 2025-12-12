@@ -2,9 +2,12 @@
 import time
 import random
 import logging
+import json
+import requests
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
+from urllib.parse import quote
 
 from instagrapi import Client
 from instagrapi.exceptions import (
@@ -432,7 +435,7 @@ class InstagramClient:
     # Helper methods with caching
     
     def get_user_followers(self, user_id: int, amount: int = 50) -> List[Dict]:
-        """Get user followers with incremental caching.
+        """Get user followers with incremental caching using GraphQL.
         
         Args:
             user_id: Instagram user ID
@@ -449,46 +452,105 @@ class InstagramClient:
             logger.info(f"💾 Using cached {len(cached)} followers for user {user_id}")
             return cached
         
-        # Fetch from API - use standard method which handles pagination internally
+        # Fetch from GraphQL API with pagination
         logger.info(f"📡 Fetching up to {amount} followers for user {user_id}...")
         all_followers = []
+        end_cursor = None
+        page = 1
         
         try:
-            # Use built-in method - it will fetch in chunks
-            result = self._safe_api_call(self.client.user_followers, user_id, amount)
-            
-            if not result:
-                logger.warning("⚠️ No followers returned or API error")
-                return []
-            
-            # Convert dict to list
-            all_followers = list(result.values())
-            logger.info(f"✅ Successfully fetched {len(all_followers)} followers")
-            
-            # Cache and save to database
-            if all_followers:
-                self.cache.set(cache_key, all_followers)
-                logger.info(f"💾 Cached {len(all_followers)} followers")
+            while len(all_followers) < amount:
+                logger.info(f"📄 Fetching page {page} (have {len(all_followers)}/{amount} so far)...")
                 
-                # Save to database
-                for follower in all_followers:
+                # Build GraphQL query URL
+                variables = {
+                    "id": str(user_id),
+                    "include_reel": True,
+                    "fetch_mutual": False,
+                    "first": 12
+                }
+                
+                if end_cursor:
+                    variables["after"] = end_cursor
+                
+                # Use instagrapi's public_request method
+                try:
+                    data = self.client.public_graphql_request(
+                        variables=variables,
+                        query_hash="37479f2b8209594dde7facb0d904896a"
+                    )
+                except Exception as e:
+                    # Check if challenge
+                    error_str = str(e).lower()
+                    if 'challenge' in error_str or 'jsondecode' in error_str:
+                        logger.error("🚨 Challenge detected")
+                        self._notify(
+                            f"🚨 <b>Challenge Required!</b>\n\n"
+                            f"Collected {len(all_followers)} followers before challenge.\n\n"
+                            f"Verify at: https://www.instagram.com/challenge/"
+                        )
+                        break
+                    raise
+                
+                # Parse response
+                if not data or 'data' not in data:
+                    logger.warning("⚠️ No data in response")
+                    break
+                
+                user_data = data['data'].get('user', {})
+                edge_followed_by = user_data.get('edge_followed_by', {})
+                edges = edge_followed_by.get('edges', [])
+                page_info = edge_followed_by.get('page_info', {})
+                
+                if not edges:
+                    logger.info("✅ No more followers")
+                    break
+                
+                # Convert to follower objects
+                for edge in edges:
+                    node = edge.get('node', {})
+                    # Create a simple object-like dict
+                    follower = type('obj', (object,), {
+                        'pk': int(node.get('id')),
+                        'username': node.get('username'),
+                        'full_name': node.get('full_name', ''),
+                        'profile_pic_url': node.get('profile_pic_url', ''),
+                        'is_verified': node.get('is_verified', False)
+                    })
+                    all_followers.append(follower)
+                
+                logger.info(f"✅ Got {len(edges)} followers (total: {len(all_followers)})")
+                
+                # Save incrementally
+                self.cache.set(cache_key, all_followers)
+                for follower in edges:
+                    node = follower.get('node', {})
                     self.db.add_follow_record(
-                        str(follower.pk),
-                        follower.username,
+                        node.get('id'),
+                        node.get('username'),
                         "my_follower"
                     )
-                logger.info(f"💾 Saved {len(all_followers)} followers to database")
+                logger.info(f"💾 Saved {len(edges)} followers (incremental)")
                 
-        except ChallengeRequired as e:
-            logger.error(f"🚨 Challenge required while fetching followers")
-            self._notify(
-                f"🚨 <b>Challenge Required!</b>\n\n"
-                f"Collected {len(all_followers)} followers before challenge.\n\n"
-                f"Please verify at: https://www.instagram.com/challenge/"
-            )
+                # Check pagination
+                if not page_info.get('has_next_page'):
+                    logger.info("✅ Reached end of followers list")
+                    break
+                
+                end_cursor = page_info.get('end_cursor')
+                page += 1
+                
+                # Small delay between pages
+                time.sleep(random.uniform(2, 5))
+                
         except Exception as e:
             logger.error(f"❌ Error fetching followers: {str(e)[:100]}")
-            self._notify(f"❌ Error fetching followers: {str(e)[:200]}")
+            self._notify(f"❌ Error: {str(e)[:200]}. Saved {len(all_followers)} followers.")
+        
+        # Final cache update
+        if all_followers:
+            self.cache.set(cache_key, all_followers)
+            logger.info(f"💾 Final: {len(all_followers)} followers cached")
         
         return all_followers
 
