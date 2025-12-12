@@ -51,9 +51,10 @@ RATE_LIMITS = {
 # Unfollow Settings
 UNFOLLOW_AFTER_DAYS = int(os.getenv('UNFOLLOW_AFTER_DAYS', 7))
 
-# Action Intervals (in seconds)
-MIN_ACTION_DELAY = int(os.getenv('MIN_ACTION_DELAY', 60))
-MAX_ACTION_DELAY = int(os.getenv('MAX_ACTION_DELAY', 600))
+# Action Intervals (in seconds) - Human-like delays
+# Default: 5-15 seconds for normal actions
+MIN_ACTION_DELAY = int(os.getenv('MIN_ACTION_DELAY', 5))
+MAX_ACTION_DELAY = int(os.getenv('MAX_ACTION_DELAY', 15))
 
 # Retry Settings
 MAX_RETRIES = int(os.getenv('MAX_RETRIES', 3))

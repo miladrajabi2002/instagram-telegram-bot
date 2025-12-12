@@ -40,6 +40,9 @@ class InstagramClient:
         # Set human-like delays (5-15 seconds)
         self.client.delay_range = [5, 15]
         
+        # Disable public API (GraphQL) - only use private API
+        self.client.request_timeout = 10
+        
         self.db = Database()
         self.cache = Cache()
         self.session_file = config.SESSION_DIR / f"{username}_session.json"
@@ -171,8 +174,9 @@ class InstagramClient:
         # Random delay between min and max
         delay = random.uniform(min_delay, max_delay)
         
-        logger.debug(f"⏱️ Waiting {delay:.1f} seconds...")
+        logger.info(f"⏱️ Waiting {delay:.1f} seconds before action...")
         time.sleep(delay)
+        logger.info(f"✅ Delay complete, executing action now")
 
     def _check_rate_limit(self, action_type: str) -> bool:
         """Check if action exceeds rate limits.
@@ -293,13 +297,18 @@ class InstagramClient:
         if not self._check_rate_limit('follow'):
             return False
         
+        logger.info(f"👤 Preparing to follow user {user_id}...")
         self._wait_random_delay()
+        
+        logger.info(f"📡 Sending follow request for user {user_id}...")
         result = self._safe_api_call(self.client.user_follow, user_id)
         
         if result:
             self._record_action('follow')
-            logger.info(f"✅ Followed user {user_id}")
+            logger.info(f"✅ Successfully followed user {user_id}")
             return True
+        
+        logger.error(f"❌ Failed to follow user {user_id}")
         return False
 
     def safe_unfollow(self, user_id: int) -> bool:
@@ -311,12 +320,16 @@ class InstagramClient:
         Returns:
             bool: True if successful
         """
+        logger.info(f"👤 Preparing to unfollow user {user_id}...")
         self._wait_random_delay()
+        
         result = self._safe_api_call(self.client.user_unfollow, user_id)
         
         if result:
-            logger.info(f"✅ Unfollowed user {user_id}")
+            logger.info(f"✅ Successfully unfollowed user {user_id}")
             return True
+        
+        logger.error(f"❌ Failed to unfollow user {user_id}")
         return False
 
     def safe_like(self, media_id: str) -> bool:
@@ -331,13 +344,17 @@ class InstagramClient:
         if not self._check_rate_limit('like'):
             return False
         
+        logger.info(f"👍 Preparing to like media {media_id}...")
         self._wait_random_delay()
+        
         result = self._safe_api_call(self.client.media_like, media_id)
         
         if result:
             self._record_action('like')
-            logger.info(f"✅ Liked media {media_id}")
+            logger.info(f"✅ Successfully liked media {media_id}")
             return True
+        
+        logger.error(f"❌ Failed to like media {media_id}")
         return False
 
     def safe_comment(self, media_id: str, text: str) -> bool:
@@ -353,13 +370,17 @@ class InstagramClient:
         if not self._check_rate_limit('comment'):
             return False
         
+        logger.info(f"💬 Preparing to comment on media {media_id}...")
         self._wait_random_delay(120, 300)  # Longer delay for comments
+        
         result = self._safe_api_call(self.client.media_comment, media_id, text)
         
         if result:
             self._record_action('comment')
-            logger.info(f"✅ Commented on media {media_id}")
+            logger.info(f"✅ Successfully commented on media {media_id}")
             return True
+        
+        logger.error(f"❌ Failed to comment on media {media_id}")
         return False
 
     def safe_view_story(self, story_id: str) -> bool:
@@ -374,14 +395,18 @@ class InstagramClient:
         if not self._check_rate_limit('story_view'):
             return False
         
+        logger.info(f"👁️ Preparing to view story {story_id}...")
         # Longer delay for stories to be more human-like
         self._wait_random_delay(15, 45)
+        
         result = self._safe_api_call(self.client.story_seen, [story_id])
         
         if result:
             self._record_action('story_view')
             logger.info(f"✅ Viewed story {story_id}")
             return True
+        
+        logger.error(f"❌ Failed to view story {story_id}")
         return False
 
     # Helper methods with caching
