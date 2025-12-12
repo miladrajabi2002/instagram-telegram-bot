@@ -36,8 +36,8 @@ fi
 
 source venv/bin/activate
 
-# Run login script
-python3 << 'PYEOF'
+# Create temporary Python script
+cat > /tmp/instagram_login_$$.py << 'PYEOF'
 import sys
 from pathlib import Path
 
@@ -74,45 +74,13 @@ try:
     print("\n" + "="*60)
     print("SUCCESS! You can now run: bash scripts/run.sh")
     print("="*60 + "\n")
+    sys.exit(0)
     
 except TwoFactorRequired:
-    print("\n⚠️  Two-Factor Authentication Required\n")
-    print("Check your phone for the 6-digit code.\n")
-    
-    # Get code from user
-    code = input("Enter 2FA code: ").strip()
-    
-    if not code or len(code) != 6:
-        print("\n❌ Invalid code format")
-        sys.exit(1)
-    
-    try:
-        print("\n⏳ Verifying code...\n")
-        
-        # Login with verification code
-        cl.login(
-            config.INSTAGRAM_USERNAME,
-            config.INSTAGRAM_PASSWORD,
-            verification_code=code
-        )
-        
-        print("✅ 2FA verification successful!")
-        
-        # Save session
-        session_file = config.SESSION_DIR / f"{config.INSTAGRAM_USERNAME}_session.json"
-        cl.dump_settings(session_file)
-        
-        print(f"✅ Session saved: {session_file}")
-        print(f"✅ User ID: {cl.user_id}")
-        print("\n" + "="*60)
-        print("SUCCESS! You can now run: bash scripts/run.sh")
-        print("="*60 + "\n")
-        
-    except Exception as e:
-        print(f"\n❌ Verification failed: {str(e)}")
-        print("\nMake sure you entered the correct code.")
-        print("Run again: bash scripts/login.sh\n")
-        sys.exit(1)
+    print("\n⚠️  Two-Factor Authentication Required")
+    print("\nCheck your phone for the 6-digit code.\n")
+    # Exit with special code to indicate 2FA needed
+    sys.exit(10)
 
 except BadPassword:
     print("\n❌ Wrong password!")
@@ -145,8 +113,77 @@ except Exception as e:
     sys.exit(1)
 PYEOF
 
-if [ $? -eq 0 ]; then
+# Run initial login attempt
+python3 /tmp/instagram_login_$$.py
+LOGIN_RESULT=$?
+
+# Check if 2FA is needed (exit code 10)
+if [ $LOGIN_RESULT -eq 10 ]; then
+    # Get 2FA code from user
+    read -p "Enter 2FA code: " VERIFICATION_CODE
+    
+    if [ -z "$VERIFICATION_CODE" ]; then
+        echo -e "${RED}\n❌ Code cannot be empty${NC}\n"
+        rm -f /tmp/instagram_login_$$.py
+        exit 1
+    fi
+    
+    # Create 2FA login script
+    cat > /tmp/instagram_login_2fa_$$.py << PYEOF
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path.cwd()))
+
+import config
+from instagrapi import Client
+
+print("\n⏳ Verifying 2FA code...\n")
+
+cl = Client()
+cl.delay_range = [1, 3]
+
+try:
+    # Login with verification code
+    cl.login(
+        config.INSTAGRAM_USERNAME,
+        config.INSTAGRAM_PASSWORD,
+        verification_code="${VERIFICATION_CODE}"
+    )
+    
+    print("✅ 2FA verification successful!")
+    
+    # Save session
+    session_file = config.SESSION_DIR / f"{config.INSTAGRAM_USERNAME}_session.json"
+    cl.dump_settings(session_file)
+    
+    print(f"✅ Session saved: {session_file}")
+    print(f"✅ User ID: {cl.user_id}")
+    print("\n" + "="*60)
+    print("SUCCESS! You can now run: bash scripts/run.sh")
+    print("="*60 + "\n")
+    
+except Exception as e:
+    print(f"\n❌ Verification failed: {str(e)}")
+    print("\nMake sure you entered the correct code.")
+    print("Run again: bash scripts/login.sh\n")
+    sys.exit(1)
+PYEOF
+    
+    # Run 2FA verification
+    python3 /tmp/instagram_login_2fa_$$.py
+    LOGIN_RESULT=$?
+    
+    # Cleanup
+    rm -f /tmp/instagram_login_2fa_$$.py
+fi
+
+# Cleanup
+rm -f /tmp/instagram_login_$$.py
+
+if [ $LOGIN_RESULT -eq 0 ]; then
     echo -e "${GREEN}Login completed successfully!${NC}"
+    exit 0
 else
     echo -e "${RED}Login failed. Check the error above.${NC}"
     exit 1
